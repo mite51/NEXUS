@@ -8,6 +8,7 @@
   import ContactPicker from '../components/ContactPicker.svelte';
   import Sidebar from '../components/Sidebar.svelte';
   import StoreView from './StoreView.svelte';
+  import ContactsView from './ContactsView.svelte';
 
   export let vaultPath: string;
 
@@ -116,6 +117,7 @@
     <h2>{
       $currentView === 'files' ? 'My Files' :
       $currentView === 'shared' ? 'Shared With Me' :
+      $currentView === 'contacts' ? 'Contacts' :
       $currentView === 'peers' ? 'Peers' : 'Store'
     }</h2>
     <div class="spacer"></div>
@@ -134,6 +136,8 @@
           <p>No shared files yet</p>
           <p class="hint">Files shared with you via PRE will appear here</p>
         </div>
+      {:else if $currentView === 'contacts'}
+        <ContactsView />
       {:else if $currentView === 'peers'}
         <div class="empty">
           <span class="icon">🌐</span>
