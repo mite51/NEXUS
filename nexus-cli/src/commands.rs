@@ -131,6 +131,14 @@ pub fn encrypt(file_path: &str, output_dir: &str, vault_path: &str) -> Result<()
             .map_err(|e| format!("Failed to write shard: {}", e))?;
     }
 
+    // Also store shards in local store for P2P serving
+    let store = ShardStore::open(".nexus-store").ok();
+    if let Some(ref store) = store {
+        for s in &shards {
+            let _ = store.put(s);
+        }
+    }
+
     // Encrypt DEK using Umbral PRE (owner can always decrypt their own capsule)
     let encrypted_dek = pre_kp.encrypt_dek(&dek)
         .map_err(|e| format!("PRE encryption failed: {}", e))?;
@@ -152,6 +160,9 @@ pub fn encrypt(file_path: &str, output_dir: &str, vault_path: &str) -> Result<()
     println!("✓ Encrypted: {}", filename);
     println!("  Shards: {} ({} bytes each)", shards.len(), DEFAULT_SHARD_SIZE);
     println!("  Manifest: {}", manifest_path.display());
+    if store.is_some() {
+        println!("  📦 Shards stored locally (available for P2P serving)");
+    }
     println!("  DEK wrapped with Umbral PRE (owner-recoverable + shareable)");
 
     Ok(())
@@ -437,12 +448,18 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
     println!("  PeerId:  {}", peer_id);
     println!();
 
+    // Open local shard store
+    let store = ShardStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open shard store: {}", e))?;
+    let stats = store.stats().unwrap_or(nexus_core::storage::StoreStats { shard_count: 0, total_bytes: 0 });
+    println!("  📦 Store: {} shards ({:.2} MB)", stats.shard_count, stats.total_bytes as f64 / 1_048_576.0);
+    println!();
+
     // Parse bootstrap peers
     let mut bootstrap_peers = Vec::new();
     for addr_str in bootstrap {
         let addr: libp2p::Multiaddr = addr_str.parse()
             .map_err(|e| format!("Invalid bootstrap addr '{}': {}", addr_str, e))?;
-        // Extract peer ID from the multiaddr (last /p2p/<peer_id> component)
         if let Some(libp2p::multiaddr::Protocol::P2p(pid)) = addr.iter().last() {
             bootstrap_peers.push((pid, addr.clone()));
         } else {
@@ -462,7 +479,7 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
     println!("  Waiting for connections...");
     println!();
 
-    // Event loop — log all events
+    // Event loop — serve shards automatically
     loop {
         match node.event_rx.recv().await {
             Some(NodeEvent::Listening(addr)) => {
@@ -475,9 +492,20 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
                 println!("  ❌ Peer disconnected: {}", peer);
             }
             Some(NodeEvent::ShardRequested { peer, cid, channel }) => {
-                println!("  📦 Shard requested by {}: {}", peer, cid);
-                // TODO: look up shard in local store and respond
-                let response = nexus_core::network::protocol::NexusResponse::ShardNotFound { cid };
+                // Auto-serve from local store
+                let response = match store.get(&cid) {
+                    Ok(Some(shard)) => {
+                        println!("  📦 Serving shard to {}: {}...", peer, &cid[..16.min(cid.len())]);
+                        nexus_core::network::protocol::NexusResponse::Shard {
+                            cid: cid.clone(),
+                            data: shard.data,
+                        }
+                    }
+                    _ => {
+                        println!("  ❓ Shard not found: {}...", &cid[..16.min(cid.len())]);
+                        nexus_core::network::protocol::NexusResponse::ShardNotFound { cid }
+                    }
+                };
                 let _ = node.command_tx.send(
                     nexus_core::network::NodeCommand::RespondShard { channel, response }
                 ).await;
