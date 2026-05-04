@@ -6,6 +6,7 @@ use rand::Rng;
 use nexus_core::identity::{IdentityKeypair, IdentityVault, Did};
 use nexus_core::crypto::pre::PreKeypair;
 use nexus_core::crypto::{encrypt_data, decrypt_data, generate_dek};
+use nexus_core::manifest::NexusManifest;
 use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
 
@@ -72,15 +73,6 @@ fn load_keys(vault_path: &str, passphrase: &str) -> Result<(IdentityKeypair, Pre
 }
 
 // --- Tauri Commands ---
-
-/// NexusManifest (duplicated here to avoid CLI dependency — matches CLI format)
-#[derive(Serialize, Deserialize)]
-struct NexusManifest {
-    owner: String,
-    owner_pre_pk: nexus_core::crypto::pre::PrePublicKey,
-    shards: nexus_core::storage::shard::ShardManifest,
-    encrypted_dek: nexus_core::crypto::pre::EncryptedDek,
-}
 
 #[tauri::command]
 pub fn create_identity(vault_path: &str, passphrase: &str) -> Result<IdentityInfo, String> {

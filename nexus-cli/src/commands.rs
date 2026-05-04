@@ -1,42 +1,15 @@
 use nexus_core::crypto::{decrypt_data, encrypt_data, generate_dek};
-use nexus_core::crypto::pre::{self, EncryptedDek, PreKeypair, PreSigner, SerializedCfrag, VerifyingKey, PrePublicKey};
+use nexus_core::crypto::pre::{self, PreKeypair, PreSigner, PrePublicKey};
 use nexus_core::identity::{Did, IdentityKeypair, IdentityVault};
+use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::network::{NexusNode, NodeConfig, NodeEvent};
-use nexus_core::storage::shard::{self, ShardManifest, Shard, DEFAULT_SHARD_SIZE};
+use nexus_core::storage::shard::{self, Shard, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::{ShardStore, compute_cid};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::time::Duration;
-
-/// On-disk manifest for an encrypted file
-#[derive(Serialize, Deserialize)]
-struct NexusManifest {
-    /// Owner's DID
-    owner: String,
-    /// Owner's PRE public key (for re-encryption)
-    owner_pre_pk: PrePublicKey,
-    /// Shard manifest (CIDs, sizes, etc.)
-    shards: ShardManifest,
-    /// Umbral-encrypted DEK (capsule + ciphertext)
-    encrypted_dek: EncryptedDek,
-}
-
-/// On-disk share grant — gives a recipient access via PRE
-#[derive(Serialize, Deserialize)]
-struct ShareGrant {
-    /// Recipient's DID
-    recipient: String,
-    /// Recipient's PRE public key
-    recipient_pre_pk: PrePublicKey,
-    /// Re-encrypted capsule fragments
-    cfrags: Vec<SerializedCfrag>,
-    /// Verifying key for cfrag verification
-    verifying_key: VerifyingKey,
-    /// Reference to the original manifest
-    manifest_ref: String,
-}
 
 pub fn init(vault_path: &str) -> Result<(), String> {
     if Path::new(vault_path).exists() {
