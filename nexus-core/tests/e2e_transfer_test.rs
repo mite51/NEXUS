@@ -91,13 +91,23 @@ async fn test_encrypt_store_fetch_decrypt_over_network() {
         }).await;
         assert!(fetch_result.is_ok() && fetch_result.unwrap());
 
-        // Small delay for response propagation
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // For this test, we'll trust that Alice stored the correct data
-        // (in production, Bob verifies CID matches received data)
-        let shard = alice_store.get(cid_hex).unwrap().unwrap();
-        fetched_shards.push(shard);
+        // Bob waits for the response
+        let shard_response = timeout(Duration::from_secs(5), async {
+            while let Some(event) = node_b.event_rx.recv().await {
+                if let NodeEvent::ShardReceived { response, .. } = event {
+                    return Some(response);
+                }
+            }
+            None
+        }).await;
+        
+        match shard_response {
+            Ok(Some(NexusResponse::Shard { data, .. })) => {
+                let cid = nexus_core::storage::compute_cid(&data);
+                fetched_shards.push(nexus_core::storage::Shard { cid, data });
+            }
+            _ => panic!("Expected shard response for CID {}", cid_hex),
+        }
     }
 
     // === Bob: Reassemble and decrypt ===

@@ -57,6 +57,11 @@ pub enum NodeEvent {
         cid: String,
         channel: request_response::ResponseChannel<NexusResponse>,
     },
+    /// Received a shard response (data or not-found)
+    ShardReceived {
+        peer: PeerId,
+        response: NexusResponse,
+    },
     /// Received kfrags from another peer
     KfragsReceived {
         peer: PeerId,
@@ -317,8 +322,11 @@ async fn handle_swarm_event(
                         }
                     }
                 }
-                request_response::Message::Response { .. } => {
-                    // Response handling is done by the caller
+                request_response::Message::Response { response, .. } => {
+                    let _ = event_tx.send(NodeEvent::ShardReceived {
+                        peer,
+                        response,
+                    }).await;
                 }
             }
         }

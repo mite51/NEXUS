@@ -516,6 +516,9 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
             Some(NodeEvent::GossipMessage { topic, source, .. }) => {
                 println!("  📢 Gossip on '{}' from {:?}", topic, source);
             }
+            Some(NodeEvent::ShardReceived { peer, .. }) => {
+                println!("  📥 Shard response from {}", peer);
+            }
             None => {
                 println!("  Node event channel closed — shutting down.");
                 break;
@@ -587,6 +590,170 @@ pub async fn ping_peer(vault_path: &str, addr_str: &str) -> Result<(), String> {
     }
 
     node.shutdown().await.map_err(|e| format!("Shutdown: {}", e))?;
+    Ok(())
+}
+
+pub async fn fetch(
+    manifest_path: &str,
+    peer_addr: &str,
+    share_path: Option<&str>,
+    output_path: Option<&str>,
+    vault_path: &str,
+) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    // Load manifest
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    let filename = manifest.shards.filename.clone().unwrap_or_else(|| "unnamed".into());
+    println!("📡 Fetching: {} ({} shards)", filename, manifest.shards.shards.len());
+
+    // Decrypt DEK (owner or shared)
+    let dek = if let Some(share_file) = share_path {
+        let share_json = fs::read_to_string(share_file)
+            .map_err(|e| format!("Failed to read share grant: {}", e))?;
+        let grant: ShareGrant = serde_json::from_str(&share_json)
+            .map_err(|e| format!("Invalid share grant: {}", e))?;
+        pre_kp.decrypt_dek_reencrypted(
+            &manifest.encrypted_dek,
+            &grant.cfrags,
+            &manifest.owner_pre_pk,
+            &grant.verifying_key,
+        ).map_err(|e| format!("Delegated decryption failed: {}", e))?
+    } else {
+        pre_kp.decrypt_dek(&manifest.encrypted_dek)
+            .map_err(|_| "Failed to decrypt DEK — use --share if you're not the owner".to_string())?
+    };
+
+    // Parse peer address
+    let addr: libp2p::Multiaddr = peer_addr.parse()
+        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
+    let target_peer = addr.iter()
+        .find_map(|p| if let libp2p::multiaddr::Protocol::P2p(pid) = p { Some(pid) } else { None })
+        .ok_or("Peer address must end with /p2p/<peer_id>")?;
+
+    // Start ephemeral node (random port, no mDNS needed)
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+    let config = NodeConfig {
+        listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
+        bootstrap_peers: vec![],
+        mdns_enabled: false,
+    };
+
+    let mut node = NexusNode::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start node: {}", e))?;
+
+    // Wait for our own listen addr
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Dial the peer
+    println!("  Connecting to {}...", target_peer);
+    node.dial(addr).await.map_err(|e| format!("Dial failed: {}", e))?;
+
+    // Wait for connection
+    let connected = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::PeerDiscovered(p) = event {
+                if p == target_peer { return true; }
+            }
+        }
+        false
+    }).await.unwrap_or(false);
+
+    if !connected {
+        node.shutdown().await.ok();
+        return Err("Failed to connect to peer within 10s".into());
+    }
+    println!("  ✅ Connected");
+
+    // Small delay for connection stabilization
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Fetch each shard
+    let mut shards = Vec::new();
+    let total = manifest.shards.shards.len();
+
+    for (i, cid_hex) in manifest.shards.shards.iter().enumerate() {
+        // Check local store first
+        let store = ShardStore::open(".nexus-store").ok();
+        if let Some(ref store) = store {
+            if let Ok(Some(shard)) = store.get(cid_hex) {
+                println!("  [{}/{}] 📦 Local: {}...", i + 1, total, &cid_hex[..16.min(cid_hex.len())]);
+                shards.push(shard);
+                continue;
+            }
+        }
+
+        // Request from peer
+        node.request_shard(target_peer, cid_hex.clone()).await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        // Wait for response
+        let response = tokio::time::timeout(Duration::from_secs(30), async {
+            while let Some(event) = node.event_rx.recv().await {
+                if let NodeEvent::ShardReceived { response, .. } = event {
+                    return Some(response);
+                }
+            }
+            None
+        }).await
+            .map_err(|_| format!("Timeout fetching shard {}", cid_hex))?
+            .ok_or_else(|| format!("Channel closed while fetching shard {}", cid_hex))?;
+
+        match response {
+            nexus_core::network::protocol::NexusResponse::Shard { cid, data } => {
+                // Verify CID
+                let computed = compute_cid(&data);
+                let computed_hex = hex_encode(&computed);
+                if computed_hex != *cid_hex {
+                    node.shutdown().await.ok();
+                    return Err(format!(
+                        "CID mismatch for shard {}: expected {}, got {}",
+                        i, cid_hex, computed_hex
+                    ));
+                }
+                println!("  [{}/{}] ⬇️  Fetched: {}...", i + 1, total, &cid[..16.min(cid.len())]);
+                let shard = nexus_core::storage::shard::Shard { cid: computed, data };
+
+                // Store locally for future use
+                if let Some(ref store) = store {
+                    let _ = store.put(&shard);
+                }
+                shards.push(shard);
+            }
+            nexus_core::network::protocol::NexusResponse::ShardNotFound { cid } => {
+                node.shutdown().await.ok();
+                return Err(format!("Peer does not have shard: {}", cid));
+            }
+            other => {
+                node.shutdown().await.ok();
+                return Err(format!("Unexpected response: {:?}", other));
+            }
+        }
+    }
+
+    node.shutdown().await.ok();
+
+    // Reassemble and decrypt
+    println!("  Reassembling...");
+    let encrypted_body = shard::reassemble(&manifest.shards, &shards)
+        .ok_or("Failed to reassemble shards")?;
+
+    let plaintext = decrypt_data(&encrypted_body, &dek)
+        .map_err(|_| "Decryption failed — data corrupted".to_string())?;
+
+    let out = output_path
+        .map(|s| s.to_string())
+        .unwrap_or(filename);
+
+    fs::write(&out, &plaintext)
+        .map_err(|e| format!("Failed to write output: {}", e))?;
+
+    println!("  ✓ Decrypted: {} ({} bytes)", out, plaintext.len());
     Ok(())
 }
 

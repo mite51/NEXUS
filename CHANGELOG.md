@@ -31,3 +31,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - Ed25519 identity → libp2p PeerId bridge (DID = PeerId, single key)
   - QUIC + TCP+Noise transports, mDNS local discovery
   - Integration tests: discovery, shard request/response, identity consistency
+- **Storage Layer (Phase 2)**:
+  - ShardStore: disk-backed content-addressed storage with CID integrity verification
+  - NetworkStore: bridges local store with P2P node (local-first, network fallback)
+  - `nexus store stats/list/import/verify` CLI commands
+  - `nexus encrypt` auto-stores shards in `.nexus-store` for P2P serving
+  - `nexus node` auto-serves shards from local store on peer requests
+  - E2E test: encrypt → shard → store → P2P fetch → reassemble → decrypt
+- **`nexus fetch` command**: full receive flow over P2P
+  - Connect to peer, request all shards, verify CIDs, reassemble, decrypt
+  - Supports both owner decryption and shared access (via `--share` grant)
+  - Auto-caches fetched shards in local store for future serving
+  - ShardReceived event for receiving shard responses from peers
