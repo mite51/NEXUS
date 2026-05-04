@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import type { FileEntry } from '../ipc';
+  import { fileIcon, formatBytes } from '../utils';
 
   export let files: FileEntry[];
   const dispatch = createEventDispatcher();
@@ -16,9 +17,12 @@
   <div class="grid">
     {#each files as file}
       <div class="card" on:click={() => dispatch('select', file)}>
-        <div class="card-icon">📄</div>
+        <div class="card-icon">{fileIcon(file.filename)}</div>
         <div class="card-name" title={file.filename}>{file.filename}</div>
-        <div class="card-meta">{file.shard_count} shard{file.shard_count !== 1 ? 's' : ''}</div>
+        <div class="card-meta">
+          {file.shard_count} shard{file.shard_count !== 1 ? 's' : ''}
+          {#if file.total_size}• {formatBytes(file.total_size)}{/if}
+        </div>
       </div>
     {/each}
   </div>

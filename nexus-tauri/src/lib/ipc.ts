@@ -23,6 +23,7 @@ export interface FileEntry {
   manifest_path: string;
   owner: string;
   shard_count: number;
+  total_size: number;
 }
 
 // Typed IPC wrappers

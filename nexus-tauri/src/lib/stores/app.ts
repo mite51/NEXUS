@@ -1,10 +1,10 @@
 import { writable, derived } from 'svelte/store';
-import type { IdentityInfo, FileEntry } from '../lib/ipc';
+import type { IdentityInfo, FileEntry } from '../ipc';
 
 export const identity = writable<IdentityInfo | null>(null);
 export const passphrase = writable<string>('');
 export const files = writable<FileEntry[]>([]);
-export const currentView = writable<'files' | 'shared' | 'peers' | 'store'>('files');
+export const currentView = writable<'files' | 'shared' | 'outbox' | 'contacts' | 'peers' | 'store'>('files');
 export const nodeOnline = writable<boolean>(false);
 export const toast = writable<string | null>(null);
 

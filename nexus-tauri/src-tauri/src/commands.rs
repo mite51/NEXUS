@@ -49,6 +49,7 @@ pub struct FileEntry {
     pub manifest_path: String,
     pub owner: String,
     pub shard_count: usize,
+    pub total_size: u64,
 }
 
 // --- Internal vault handling ---
@@ -291,6 +292,7 @@ pub fn list_files() -> Result<Vec<FileEntry>, String> {
                         manifest_path: path.to_string_lossy().to_string(),
                         owner: manifest.owner,
                         shard_count: manifest.shards.shards.len(),
+                        total_size: manifest.shards.total_size,
                     });
                 }
             }
