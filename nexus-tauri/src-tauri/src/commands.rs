@@ -9,6 +9,7 @@ use nexus_core::crypto::{encrypt_data, decrypt_data, generate_dek};
 use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
+use nexus_core::storage::{ReceivedFiles, ReceivedFile};
 use nexus_core::network::{SendQueue, QueuedSend, SendStatus};
 
 // --- Response types ---
@@ -494,4 +495,108 @@ pub fn cancel_send(id: &str) -> Result<(), String> {
 pub fn retry_send(id: &str) -> Result<(), String> {
     let queue = SendQueue::open(SEND_QUEUE_PATH);
     queue.retry(id)
+}
+
+const RECEIVED_FILES_PATH: &str = ".nexus-received.json";
+
+#[derive(Serialize)]
+pub struct ReceivedFileInfo {
+    pub id: String,
+    pub sender_did: String,
+    pub filename: String,
+    pub has_share_grant: bool,
+    pub received_at: u64,
+    pub decrypted: bool,
+}
+
+impl From<ReceivedFile> for ReceivedFileInfo {
+    fn from(f: ReceivedFile) -> Self {
+        Self {
+            id: f.id,
+            sender_did: f.sender_did,
+            filename: f.filename,
+            has_share_grant: f.share_grant_json.is_some(),
+            received_at: f.received_at,
+            decrypted: f.decrypted,
+        }
+    }
+}
+
+#[tauri::command]
+pub fn list_received_files() -> Result<Vec<ReceivedFileInfo>, String> {
+    let store = ReceivedFiles::open(RECEIVED_FILES_PATH);
+    Ok(store.all().into_iter().map(|f| f.into()).collect())
+}
+
+#[tauri::command]
+pub fn decrypt_received(
+    received_id: &str,
+    vault_path: &str,
+    passphrase: &str,
+    output_path: Option<&str>,
+) -> Result<String, String> {
+    let received_store = ReceivedFiles::open(RECEIVED_FILES_PATH);
+    let all = received_store.all();
+    let entry = all.iter().find(|f| f.id == received_id)
+        .ok_or("Received file not found")?;
+
+    let (_keypair, pre_kp) = load_keys(vault_path, passphrase)?;
+
+    // Load manifest
+    let manifest_json = fs::read_to_string(&entry.manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    // Determine if we need PRE decryption or direct
+    let dek = if let Some(ref grant_json) = entry.share_grant_json {
+        // PRE shared decryption
+        let grant: ShareGrant = serde_json::from_str(grant_json)
+            .map_err(|e| format!("Invalid share grant: {}", e))?;
+
+        pre_kp.decrypt_dek_reencrypted(&manifest.encrypted_dek, &grant.cfrags, &manifest.owner_pre_pk, &grant.verifying_key)
+            .map_err(|e| format!("PRE decryption failed: {:?}", e))?
+    } else {
+        // Direct decryption (we're the owner)
+        pre_kp.decrypt_dek(&manifest.encrypted_dek)
+            .map_err(|_| "Failed to decrypt — wrong key or not the owner".to_string())?
+    };
+
+    // Load shards and reassemble
+    let manifest_dir = Path::new(&entry.manifest_path).parent().unwrap_or(Path::new("."));
+    let shards_dir = manifest_dir.join("shards");
+
+    let mut shards = Vec::new();
+    for cid_hex in &manifest.shards.shards {
+        let data = ShardStore::open(".nexus-store").ok()
+            .and_then(|s| s.get(cid_hex).ok().flatten().map(|s| s.data))
+            .or_else(|| fs::read(shards_dir.join(cid_hex)).ok())
+            .ok_or_else(|| format!("Shard not found: {}", cid_hex))?;
+        shards.push(Shard { cid: hex_decode(cid_hex)?, data });
+    }
+
+    let encrypted_body = reassemble(&manifest.shards, &shards)
+        .ok_or("Reassembly failed")?;
+
+    let plaintext = decrypt_data(&encrypted_body, &dek)
+        .map_err(|_| "Decryption failed".to_string())?;
+
+    let out = output_path
+        .map(|s| s.to_string())
+        .or(manifest.shards.filename.clone())
+        .unwrap_or_else(|| "decrypted_output".into());
+
+    fs::write(&out, &plaintext)
+        .map_err(|e| format!("Failed to write: {}", e))?;
+
+    // Mark as decrypted
+    let _ = received_store.mark_decrypted(received_id);
+
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn remove_received(id: &str) -> Result<(), String> {
+    let store = ReceivedFiles::open(RECEIVED_FILES_PATH);
+    store.remove(id)
 }

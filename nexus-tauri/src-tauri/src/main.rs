@@ -22,6 +22,9 @@ fn main() {
             commands::list_send_queue,
             commands::cancel_send,
             commands::retry_send,
+            commands::list_received_files,
+            commands::decrypt_received,
+            commands::remove_received,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

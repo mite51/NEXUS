@@ -139,3 +139,25 @@ export async function cancelSend(id: string): Promise<void> {
 export async function retrySend(id: string): Promise<void> {
   return invoke('retry_send', { id });
 }
+
+// Received Files
+export interface ReceivedFileInfo {
+  id: string;
+  sender_did: string;
+  filename: string;
+  has_share_grant: boolean;
+  received_at: number;
+  decrypted: boolean;
+}
+
+export async function listReceivedFiles(): Promise<ReceivedFileInfo[]> {
+  return invoke('list_received_files');
+}
+
+export async function decryptReceived(receivedId: string, vaultPath: string, passphrase: string, outputPath?: string): Promise<string> {
+  return invoke('decrypt_received', { receivedId, vaultPath, passphrase, outputPath });
+}
+
+export async function removeReceived(id: string): Promise<void> {
+  return invoke('remove_received', { id });
+}

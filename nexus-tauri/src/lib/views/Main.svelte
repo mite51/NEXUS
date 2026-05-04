@@ -10,6 +10,7 @@
   import StoreView from './StoreView.svelte';
   import ContactsView from './ContactsView.svelte';
   import SendQueueView from './SendQueueView.svelte';
+  import SharedWithMeView from './SharedWithMeView.svelte';
 
   export let vaultPath: string;
 
@@ -143,11 +144,7 @@
       {#if $currentView === 'files'}
         <FileGrid files={$files} on:select={handleFileSelect} />
       {:else if $currentView === 'shared'}
-        <div class="empty">
-          <span class="icon">📨</span>
-          <p>No shared files yet</p>
-          <p class="hint">Files shared with you via PRE will appear here</p>
-        </div>
+        <SharedWithMeView {vaultPath} />
       {:else if $currentView === 'outbox'}
         <SendQueueView />
       {:else if $currentView === 'contacts'}
