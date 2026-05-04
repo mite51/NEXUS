@@ -71,6 +71,27 @@ enum Commands {
         #[arg(long, default_value = "vault.json")]
         vault: String,
     },
+    /// Start a NEXUS network node (peer-to-peer daemon)
+    Node {
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+        /// Listen address (can be specified multiple times)
+        #[arg(long, default_values_t = vec![
+            "/ip4/0.0.0.0/udp/4001/quic-v1".to_string(),
+            "/ip4/0.0.0.0/tcp/4001".to_string(),
+        ])]
+        listen: Vec<String>,
+        /// Bootstrap peer (multiaddr, can be specified multiple times)
+        #[arg(long)]
+        bootstrap: Vec<String>,
+    },
+    /// Ping a peer node to check connectivity
+    Ping {
+        /// Multiaddr of the peer to ping
+        addr: String,
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
 }
 
 fn main() {
@@ -88,6 +109,14 @@ fn main() {
             commands::decrypt_shared(&manifest, &share, output.as_deref(), &vault)
         }
         Commands::Share { manifest, to, vault } => commands::share(&manifest, &to, &vault),
+        Commands::Node { vault, listen, bootstrap } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(commands::run_node(&vault, &listen, &bootstrap))
+        }
+        Commands::Ping { addr, vault } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(commands::ping_peer(&vault, &addr))
+        }
     };
 
     if let Err(e) = result {

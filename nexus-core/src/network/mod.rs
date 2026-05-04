@@ -10,5 +10,5 @@ pub mod node;
 pub mod behaviour;
 pub mod protocol;
 
-pub use node::{NexusNode, NodeConfig, NodeEvent};
+pub use node::{NexusNode, NodeConfig, NodeEvent, NodeCommand};
 pub use behaviour::NexusBehaviour;

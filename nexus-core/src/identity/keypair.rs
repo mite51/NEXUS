@@ -45,6 +45,20 @@ impl IdentityKeypair {
         let signing_key = SigningKey::from_bytes(bytes);
         Self { signing_key }
     }
+
+    /// Convert to a libp2p Keypair (same Ed25519 key → same PeerId as DID)
+    pub fn to_libp2p_keypair(&self) -> libp2p::identity::Keypair {
+        // ed25519-dalek uses 32-byte seed; libp2p wants the same
+        let bytes = self.signing_key.to_bytes();
+        let libp2p_kp = libp2p::identity::Keypair::ed25519_from_bytes(bytes)
+            .expect("valid ed25519 seed");
+        libp2p_kp
+    }
+
+    /// Get the libp2p PeerId derived from this keypair
+    pub fn peer_id(&self) -> libp2p::PeerId {
+        self.to_libp2p_keypair().public().to_peer_id()
+    }
 }
 
 #[cfg(test)]

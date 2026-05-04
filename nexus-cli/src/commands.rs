@@ -1,11 +1,13 @@
 use nexus_core::crypto::{decrypt_data, encrypt_data, generate_dek};
 use nexus_core::crypto::pre::{self, EncryptedDek, PreKeypair, PreSigner, SerializedCfrag, VerifyingKey, PrePublicKey};
 use nexus_core::identity::{Did, IdentityKeypair, IdentityVault};
+use nexus_core::network::{NexusNode, NodeConfig, NodeEvent};
 use nexus_core::storage::shard::{self, ShardManifest, DEFAULT_SHARD_SIZE};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
 /// On-disk manifest for an encrypted file
 #[derive(Serialize, Deserialize)]
@@ -416,4 +418,145 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| "Invalid hex".into()))
         .collect()
+}
+
+// --- Network Commands ---
+
+pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[String]) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, _pre_kp) = load_keys(vault_path, &passphrase)?;
+    let did = Did::from_public_identity(&keypair.public_identity());
+
+    // Convert identity key to libp2p keypair
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+    let peer_id = libp2p_keypair.public().to_peer_id();
+
+    println!("⚡ NEXUS Node");
+    println!("  DID:     {}", did);
+    println!("  PeerId:  {}", peer_id);
+    println!();
+
+    // Parse bootstrap peers
+    let mut bootstrap_peers = Vec::new();
+    for addr_str in bootstrap {
+        let addr: libp2p::Multiaddr = addr_str.parse()
+            .map_err(|e| format!("Invalid bootstrap addr '{}': {}", addr_str, e))?;
+        // Extract peer ID from the multiaddr (last /p2p/<peer_id> component)
+        if let Some(libp2p::multiaddr::Protocol::P2p(pid)) = addr.iter().last() {
+            bootstrap_peers.push((pid, addr.clone()));
+        } else {
+            return Err(format!("Bootstrap addr must end with /p2p/<peer_id>: {}", addr_str));
+        }
+    }
+
+    let config = NodeConfig {
+        listen_addrs: listen_addrs.to_vec(),
+        bootstrap_peers,
+        mdns_enabled: true,
+    };
+
+    let mut node = NexusNode::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start node: {}", e))?;
+
+    println!("  Waiting for connections...");
+    println!();
+
+    // Event loop — log all events
+    loop {
+        match node.event_rx.recv().await {
+            Some(NodeEvent::Listening(addr)) => {
+                println!("  📡 Listening: {}/p2p/{}", addr, peer_id);
+            }
+            Some(NodeEvent::PeerDiscovered(peer)) => {
+                println!("  ✅ Peer discovered: {}", peer);
+            }
+            Some(NodeEvent::PeerDisconnected(peer)) => {
+                println!("  ❌ Peer disconnected: {}", peer);
+            }
+            Some(NodeEvent::ShardRequested { peer, cid, channel }) => {
+                println!("  📦 Shard requested by {}: {}", peer, cid);
+                // TODO: look up shard in local store and respond
+                let response = nexus_core::network::protocol::NexusResponse::ShardNotFound { cid };
+                let _ = node.command_tx.send(
+                    nexus_core::network::NodeCommand::RespondShard { channel, response }
+                ).await;
+            }
+            Some(NodeEvent::KfragsReceived { peer, manifest_id, .. }) => {
+                println!("  🔑 Kfrags received from {} for manifest {}", peer, manifest_id);
+            }
+            Some(NodeEvent::GossipMessage { topic, source, .. }) => {
+                println!("  📢 Gossip on '{}' from {:?}", topic, source);
+            }
+            None => {
+                println!("  Node event channel closed — shutting down.");
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn ping_peer(vault_path: &str, addr_str: &str) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, _) = load_keys(vault_path, &passphrase)?;
+
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+    let _our_peer_id = libp2p_keypair.public().to_peer_id();
+
+    let addr: libp2p::Multiaddr = addr_str.parse()
+        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
+
+    // Extract target peer ID
+    let target_peer_id = addr.iter()
+        .find_map(|p| if let libp2p::multiaddr::Protocol::P2p(pid) = p { Some(pid) } else { None })
+        .ok_or("Multiaddr must contain /p2p/<peer_id>")?;
+
+    println!("Pinging {} ...", target_peer_id);
+
+    let config = NodeConfig {
+        listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
+        bootstrap_peers: vec![],
+        mdns_enabled: false,
+    };
+
+    let mut node = NexusNode::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start node: {}", e))?;
+
+    // Wait for listening
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Dial the peer
+    node.dial(addr).await.map_err(|e| format!("Dial failed: {}", e))?;
+
+    // Send a ping request
+    use nexus_core::network::NodeCommand;
+    node.command_tx.send(NodeCommand::RequestShard {
+        peer: target_peer_id,
+        cid: "__ping__".to_string(),
+    }).await.map_err(|e| format!("Send failed: {}", e))?;
+
+    // Wait for response (timeout 5s)
+    let start = std::time::Instant::now();
+    loop {
+        if start.elapsed() > Duration::from_secs(5) {
+            println!("❌ Timeout — peer did not respond within 5s");
+            break;
+        }
+        match tokio::time::timeout(Duration::from_secs(5), node.event_rx.recv()).await {
+            Ok(Some(NodeEvent::PeerDiscovered(peer))) if peer == target_peer_id => {
+                let elapsed = start.elapsed();
+                println!("✅ Connected to {} in {:?}", peer, elapsed);
+                break;
+            }
+            Ok(Some(_)) => continue,
+            _ => {
+                println!("❌ Could not reach peer");
+                break;
+            }
+        }
+    }
+
+    node.shutdown().await.map_err(|e| format!("Shutdown: {}", e))?;
+    Ok(())
 }
