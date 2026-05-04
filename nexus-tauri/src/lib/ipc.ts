@@ -1,0 +1,50 @@
+import { invoke } from '@tauri-apps/api/core';
+
+// Types matching Tauri backend responses
+export interface IdentityInfo {
+  did: string;
+  pre_public_key_hex: string;
+}
+
+export interface EncryptResult {
+  filename: string;
+  shard_count: number;
+  manifest_path: string;
+}
+
+export interface StoreStatsResult {
+  shard_count: number;
+  total_bytes: number;
+}
+
+export interface FileEntry {
+  filename: string;
+  manifest_path: string;
+  owner: string;
+  shard_count: number;
+}
+
+// Typed IPC wrappers
+export async function createIdentity(vaultPath: string, passphrase: string): Promise<IdentityInfo> {
+  return invoke('create_identity', { vaultPath, passphrase });
+}
+
+export async function getIdentity(vaultPath: string, passphrase: string): Promise<IdentityInfo> {
+  return invoke('get_identity', { vaultPath, passphrase });
+}
+
+export async function encryptFile(filePath: string, vaultPath: string, passphrase: string): Promise<EncryptResult> {
+  return invoke('encrypt_file', { filePath, vaultPath, passphrase });
+}
+
+export async function decryptFile(manifestPath: string, outputPath: string | null, vaultPath: string, passphrase: string): Promise<string> {
+  return invoke('decrypt_file', { manifestPath, outputPath, vaultPath, passphrase });
+}
+
+export async function getStoreStats(): Promise<StoreStatsResult> {
+  return invoke('get_store_stats');
+}
+
+export async function listFiles(): Promise<FileEntry[]> {
+  return invoke('list_files');
+}
