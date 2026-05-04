@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FileEntry } from '../ipc';
   import { createEventDispatcher } from 'svelte';
+  import { formatBytes } from '../utils';
 
   export let file: FileEntry | null;
   const dispatch = createEventDispatcher();
@@ -23,6 +24,11 @@
     <div class="detail-section">
       <div class="detail-label">Shards</div>
       <div class="detail-value">{file.shard_count}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-label">Size</div>
+      <div class="detail-value">{formatBytes(file.total_size)}</div>
     </div>
 
     <div class="detail-section">

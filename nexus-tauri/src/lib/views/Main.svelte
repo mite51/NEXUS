@@ -8,6 +8,7 @@
   import ContactPicker from '../components/ContactPicker.svelte';
   import Sidebar from '../components/Sidebar.svelte';
   import StoreView from './StoreView.svelte';
+  import Spinner from '../components/Spinner.svelte';
   import ContactsView from './ContactsView.svelte';
   import SendQueueView from './SendQueueView.svelte';
   import SharedWithMeView from './SharedWithMeView.svelte';
@@ -18,12 +19,16 @@
   let selectedFile: FileEntry | null = null;
   let pickerMode: 'share' | 'send' | null = null;
   let pickerFile: FileEntry | null = null;
+  let encrypting = false;
+  let decrypting = false;
+  let loadingFiles = true;
 
   onMount(async () => {
     try {
       const f = await listFiles();
       files.set(f);
     } catch (e) { console.error('Failed to list files:', e); }
+    loadingFiles = false;
   });
 
   function handleCopyDid() {
@@ -38,14 +43,16 @@
     const filePath = await pickFileToEncrypt();
     if (!filePath) return;
 
+    encrypting = true;
     try {
       const result = await encryptFile(filePath, vaultPath, $passphrase);
       showToast(`✓ Encrypted: ${result.filename} (${result.shard_count} shards)`);
       const f = await listFiles();
       files.set(f);
     } catch (e: any) {
-      showToast(`Error: ${e}`);
+      showToast(`⚠ ${e}`);
     }
+    encrypting = false;
   }
 
   function handleFileSelect(e: CustomEvent<FileEntry>) {
@@ -57,12 +64,14 @@
     const savePath = await pickSaveLocation(file.filename);
     if (!savePath) return;
 
+    decrypting = true;
     try {
       const out = await decryptFile(file.manifest_path, savePath, vaultPath, $passphrase);
       showToast(`✓ Decrypted: ${out}`);
     } catch (e: any) {
-      showToast(`Error: ${e}`);
+      showToast(`⚠ ${e}`);
     }
+    decrypting = false;
   }
 
   function handleShare(e: CustomEvent<FileEntry>) {
@@ -136,14 +145,20 @@
     }</h2>
     <div class="spacer"></div>
     {#if $currentView === 'files'}
-      <button class="primary-btn" on:click={handleEncrypt}>+ Encrypt File</button>
+      <button class="primary-btn" on:click={handleEncrypt} disabled={encrypting}>
+        {encrypting ? 'Encrypting…' : '+ Encrypt File'}
+      </button>
     {/if}
   </div>
 
   <div class="content-wrapper">
     <div class="content">
       {#if $currentView === 'files'}
-        <FileGrid files={$files} on:select={handleFileSelect} />
+        {#if loadingFiles}
+          <div class="loading-center"><Spinner size={32} /></div>
+        {:else}
+          <FileGrid files={$files} on:select={handleFileSelect} />
+        {/if}
       {:else if $currentView === 'shared'}
         <SharedWithMeView {vaultPath} />
       {:else if $currentView === 'outbox'}
@@ -207,4 +222,9 @@
   .empty .icon { font-size: 48px; }
   .empty p { font-size: 14px; }
   .empty .hint { font-size: 12px; }
+  .loading-center {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%;
+  }
+  .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
