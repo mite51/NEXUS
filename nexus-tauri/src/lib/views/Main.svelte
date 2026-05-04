@@ -1,11 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, encryptFile } from '../ipc';
+  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation } from '../ipc';
+  import type { FileEntry } from '../ipc';
   import FileGrid from '../components/FileGrid.svelte';
+  import DetailPanel from '../components/DetailPanel.svelte';
   import Sidebar from '../components/Sidebar.svelte';
+  import StoreView from './StoreView.svelte';
 
   export let vaultPath: string;
+
+  let selectedFile: FileEntry | null = null;
 
   onMount(async () => {
     try {
@@ -29,12 +34,36 @@
     try {
       const result = await encryptFile(filePath, vaultPath, $passphrase);
       showToast(`✓ Encrypted: ${result.filename} (${result.shard_count} shards)`);
-      // Refresh file list
       const f = await listFiles();
       files.set(f);
     } catch (e: any) {
       showToast(`Error: ${e}`);
     }
+  }
+
+  function handleFileSelect(e: CustomEvent<FileEntry>) {
+    selectedFile = e.detail;
+  }
+
+  async function handleDecrypt(e: CustomEvent<FileEntry>) {
+    const file = e.detail;
+    const savePath = await pickSaveLocation(file.filename);
+    if (!savePath) return;
+
+    try {
+      const out = await decryptFile(file.manifest_path, savePath, vaultPath, $passphrase);
+      showToast(`✓ Decrypted: ${out}`);
+    } catch (e: any) {
+      showToast(`Error: ${e}`);
+    }
+  }
+
+  function handleShare(e: CustomEvent<FileEntry>) {
+    showToast('Share flow coming soon');
+  }
+
+  function handleSend(e: CustomEvent<FileEntry>) {
+    showToast('Send flow coming soon');
   }
 </script>
 
@@ -42,7 +71,7 @@
   did={$didShort}
   view={$currentView}
   online={$nodeOnline}
-  on:navigate={(e) => currentView.set(e.detail)}
+  on:navigate={(e) => { currentView.set(e.detail); selectedFile = null; }}
   on:copyDid={handleCopyDid}
 />
 
@@ -59,24 +88,35 @@
     {/if}
   </div>
 
-  <div class="content">
-    {#if $currentView === 'files'}
-      <FileGrid files={$files} />
-    {:else if $currentView === 'shared'}
-      <div class="empty">
-        <span class="icon">📨</span>
-        <p>No shared files yet</p>
-      </div>
-    {:else if $currentView === 'peers'}
-      <div class="empty">
-        <span class="icon">🌐</span>
-        <p>Node is offline — start it to discover peers</p>
-      </div>
-    {:else}
-      <div class="empty">
-        <span class="icon">📦</span>
-        <p>Shard store stats coming soon</p>
-      </div>
+  <div class="content-wrapper">
+    <div class="content">
+      {#if $currentView === 'files'}
+        <FileGrid files={$files} on:select={handleFileSelect} />
+      {:else if $currentView === 'shared'}
+        <div class="empty">
+          <span class="icon">📨</span>
+          <p>No shared files yet</p>
+          <p class="hint">Files shared with you via PRE will appear here</p>
+        </div>
+      {:else if $currentView === 'peers'}
+        <div class="empty">
+          <span class="icon">🌐</span>
+          <p>Node is offline</p>
+          <p class="hint">Start the node to discover peers on your network</p>
+        </div>
+      {:else}
+        <StoreView />
+      {/if}
+    </div>
+
+    {#if selectedFile && $currentView === 'files'}
+      <DetailPanel
+        file={selectedFile}
+        on:close={() => selectedFile = null}
+        on:decrypt={handleDecrypt}
+        on:share={handleShare}
+        on:send={handleSend}
+      />
     {/if}
   </div>
 </main>
@@ -98,12 +138,16 @@
     font-size: 13px; cursor: pointer;
   }
   .primary-btn:hover { opacity: 0.85; }
+  .content-wrapper {
+    flex: 1; display: flex; overflow: hidden;
+  }
   .content { flex: 1; padding: 24px; overflow-y: auto; }
   .empty {
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    height: 100%; gap: 12px; color: var(--text-secondary);
+    height: 100%; gap: 8px; color: var(--text-secondary);
   }
   .empty .icon { font-size: 48px; }
   .empty p { font-size: 14px; }
+  .empty .hint { font-size: 12px; }
 </style>
