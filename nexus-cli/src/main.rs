@@ -1,9 +1,10 @@
-mod commands;
-
 use clap::{Parser, Subcommand};
 
+mod commands;
+
+/// NEXUS — Decentralized encrypted file ownership
 #[derive(Parser)]
-#[command(name = "nexus", version, about = "NEXUS — Decentralized encrypted file ownership")]
+#[command(name = "nexus", version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -13,57 +14,61 @@ struct Cli {
 enum Commands {
     /// Initialize a new identity (generate keypair + encrypted vault)
     Init {
-        /// Path to store the vault file (default: ./nexus-vault.json)
-        #[arg(short, long, default_value = "nexus-vault.json")]
+        /// Path to store the vault file
+        #[arg(long, default_value = "vault.json")]
         vault: String,
     },
-
     /// Show your identity (DID and public key)
     Identity {
-        /// Path to vault file
-        #[arg(short, long, default_value = "nexus-vault.json")]
+        #[arg(long, default_value = "vault.json")]
         vault: String,
     },
-
+    /// Export your public key (share with others so they can grant you access)
+    ExportKey {
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
     /// Encrypt a file (produces encrypted shards + manifest)
     Encrypt {
         /// File to encrypt
         file: String,
-
         /// Output directory for shards and manifest
-        #[arg(short, long, default_value = ".")]
+        #[arg(long, short, default_value = ".")]
         output: String,
-
-        /// Path to vault file (for key wrapping)
-        #[arg(short, long, default_value = "nexus-vault.json")]
+        #[arg(long, default_value = "vault.json")]
         vault: String,
     },
-
-    /// Decrypt a file from a manifest
+    /// Decrypt a file from a manifest (owner decryption)
     Decrypt {
-        /// Path to the manifest file
+        /// Path to the .nexus manifest file
         manifest: String,
-
-        /// Output file path
-        #[arg(short, long)]
+        /// Output filename (defaults to original name)
+        #[arg(long, short)]
         output: Option<String>,
-
-        /// Path to vault file
-        #[arg(short, long, default_value = "nexus-vault.json")]
+        #[arg(long, default_value = "vault.json")]
         vault: String,
     },
-
+    /// Decrypt a shared file using a .share grant
+    DecryptShared {
+        /// Path to the .nexus manifest file
+        manifest: String,
+        /// Path to the .share grant file
+        #[arg(long)]
+        share: String,
+        /// Output filename
+        #[arg(long, short)]
+        output: Option<String>,
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
     /// Share access to an encrypted file with another DID
     Share {
-        /// Path to the manifest file
+        /// Path to the .nexus manifest file
         manifest: String,
-
-        /// Recipient's DID (did:nexus:...)
-        #[arg(short, long)]
+        /// Path to recipient's exported public key file
+        #[arg(long)]
         to: String,
-
-        /// Path to your vault file
-        #[arg(short, long, default_value = "nexus-vault.json")]
+        #[arg(long, default_value = "vault.json")]
         vault: String,
     },
 }
@@ -74,8 +79,14 @@ fn main() {
     let result = match cli.command {
         Commands::Init { vault } => commands::init(&vault),
         Commands::Identity { vault } => commands::identity(&vault),
+        Commands::ExportKey { vault } => commands::export_key(&vault),
         Commands::Encrypt { file, output, vault } => commands::encrypt(&file, &output, &vault),
-        Commands::Decrypt { manifest, output, vault } => commands::decrypt(&manifest, output.as_deref(), &vault),
+        Commands::Decrypt { manifest, output, vault } => {
+            commands::decrypt(&manifest, output.as_deref(), &vault)
+        }
+        Commands::DecryptShared { manifest, share, output, vault } => {
+            commands::decrypt_shared(&manifest, &share, output.as_deref(), &vault)
+        }
         Commands::Share { manifest, to, vault } => commands::share(&manifest, &to, &vault),
     };
 

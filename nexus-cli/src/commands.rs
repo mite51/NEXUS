@@ -1,4 +1,5 @@
 use nexus_core::crypto::{decrypt_data, encrypt_data, generate_dek};
+use nexus_core::crypto::pre::{self, EncryptedDek, PreKeypair, PreSigner, SerializedCfrag, VerifyingKey, PrePublicKey};
 use nexus_core::identity::{Did, IdentityKeypair, IdentityVault};
 use nexus_core::storage::shard::{self, ShardManifest, DEFAULT_SHARD_SIZE};
 use serde::{Deserialize, Serialize};
@@ -6,18 +7,32 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-/// Manifest stored on disk (includes capsule/encrypted DEK for PRE — placeholder for now)
+/// On-disk manifest for an encrypted file
 #[derive(Serialize, Deserialize)]
 struct NexusManifest {
     /// Owner's DID
     owner: String,
+    /// Owner's PRE public key (for re-encryption)
+    owner_pre_pk: PrePublicKey,
     /// Shard manifest (CIDs, sizes, etc.)
     shards: ShardManifest,
-    /// Encrypted DEK (hex) — for now, directly encrypted with owner's key via AES
-    /// Will be replaced with umbral Capsule + encrypted_dek once PRE is integrated
-    encrypted_dek: String,
-    /// Nonce for DEK encryption (hex)
-    dek_nonce: String,
+    /// Umbral-encrypted DEK (capsule + ciphertext)
+    encrypted_dek: EncryptedDek,
+}
+
+/// On-disk share grant — gives a recipient access via PRE
+#[derive(Serialize, Deserialize)]
+struct ShareGrant {
+    /// Recipient's DID
+    recipient: String,
+    /// Recipient's PRE public key
+    recipient_pre_pk: PrePublicKey,
+    /// Re-encrypted capsule fragments
+    cfrags: Vec<SerializedCfrag>,
+    /// Verifying key for cfrag verification
+    verifying_key: VerifyingKey,
+    /// Reference to the original manifest
+    manifest_ref: String,
 }
 
 pub fn init(vault_path: &str) -> Result<(), String> {
@@ -25,7 +40,6 @@ pub fn init(vault_path: &str) -> Result<(), String> {
         return Err(format!("Vault already exists at: {}", vault_path));
     }
 
-    // Prompt for passphrase
     let passphrase = prompt_passphrase("Set vault passphrase: ")?;
     let confirm = prompt_passphrase("Confirm passphrase: ")?;
 
@@ -33,13 +47,26 @@ pub fn init(vault_path: &str) -> Result<(), String> {
         return Err("Passphrases don't match".into());
     }
 
+    // Generate Ed25519 identity keypair
     let keypair = IdentityKeypair::generate();
     let did = Did::from_public_identity(&keypair.public_identity());
 
+    // Generate PRE keypair (secp256k1 for Umbral)
+    let pre_keypair = PreKeypair::generate();
+    let pre_pk = pre_keypair.public_key();
+
+    // Store both in vault
     let vault = IdentityVault::seal(&keypair, &passphrase)
         .map_err(|e| format!("Failed to create vault: {}", e))?;
 
-    let json = serde_json::to_string_pretty(&vault)
+    // Save vault + PRE seed together
+    let vault_data = VaultFile {
+        identity_vault: vault,
+        pre_seed: hex_encode(&pre_keypair.to_secret_bytes()),
+        pre_public_key: pre_pk.clone(),
+    };
+
+    let json = serde_json::to_string_pretty(&vault_data)
         .map_err(|e| format!("Serialization error: {}", e))?;
 
     fs::write(vault_path, json)
@@ -47,6 +74,7 @@ pub fn init(vault_path: &str) -> Result<(), String> {
 
     println!("✓ Identity created");
     println!("  DID: {}", did);
+    println!("  PRE public key: {} bytes", pre_pk.bytes.len());
     println!("  Vault: {}", vault_path);
     println!();
     println!("  Keep your passphrase safe — it's the only way to unlock your identity.");
@@ -56,18 +84,19 @@ pub fn init(vault_path: &str) -> Result<(), String> {
 
 pub fn identity(vault_path: &str) -> Result<(), String> {
     let passphrase = prompt_passphrase("Vault passphrase: ")?;
-    let keypair = load_keypair(vault_path, &passphrase)?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
     let did = Did::from_public_identity(&keypair.public_identity());
 
     println!("DID: {}", did);
-    println!("Public key: {}", hex_encode(&keypair.public_identity().public_key));
+    println!("Ed25519 public key: {}", hex_encode(&keypair.public_identity().public_key));
+    println!("PRE public key (hex): {}", hex_encode(&pre_kp.public_key().bytes));
 
     Ok(())
 }
 
 pub fn encrypt(file_path: &str, output_dir: &str, vault_path: &str) -> Result<(), String> {
     let passphrase = prompt_passphrase("Vault passphrase: ")?;
-    let keypair = load_keypair(vault_path, &passphrase)?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
     let did = Did::from_public_identity(&keypair.public_identity());
 
     // Read input file
@@ -99,22 +128,16 @@ pub fn encrypt(file_path: &str, output_dir: &str, vault_path: &str) -> Result<()
             .map_err(|e| format!("Failed to write shard: {}", e))?;
     }
 
-    // Encrypt the DEK for ourselves (simple AES wrap for now)
-    // TODO: Replace with umbral PRE capsule once integrated
-    let dek_key = derive_dek_wrapping_key(&keypair);
-    let encrypted_dek_blob = encrypt_data(&dek, &dek_key)
-        .map_err(|e| format!("DEK wrapping failed: {}", e))?;
-
-    // Split nonce from ciphertext for storage
-    let dek_nonce = hex_encode(&encrypted_dek_blob[..12]);
-    let dek_ct = hex_encode(&encrypted_dek_blob[12..]);
+    // Encrypt DEK using Umbral PRE (owner can always decrypt their own capsule)
+    let encrypted_dek = pre_kp.encrypt_dek(&dek)
+        .map_err(|e| format!("PRE encryption failed: {}", e))?;
 
     // Write manifest
     let manifest = NexusManifest {
         owner: did.0.clone(),
+        owner_pre_pk: pre_kp.public_key(),
         shards: shard_manifest,
-        encrypted_dek: dek_ct,
-        dek_nonce,
+        encrypted_dek,
     };
 
     let manifest_path = Path::new(output_dir).join(format!("{}.nexus", filename));
@@ -126,13 +149,14 @@ pub fn encrypt(file_path: &str, output_dir: &str, vault_path: &str) -> Result<()
     println!("✓ Encrypted: {}", filename);
     println!("  Shards: {} ({} bytes each)", shards.len(), DEFAULT_SHARD_SIZE);
     println!("  Manifest: {}", manifest_path.display());
+    println!("  DEK wrapped with Umbral PRE (owner-recoverable + shareable)");
 
     Ok(())
 }
 
 pub fn decrypt(manifest_path: &str, output_path: Option<&str>, vault_path: &str) -> Result<(), String> {
     let passphrase = prompt_passphrase("Vault passphrase: ")?;
-    let keypair = load_keypair(vault_path, &passphrase)?;
+    let (_keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
 
     // Load manifest
     let manifest_json = fs::read_to_string(manifest_path)
@@ -140,19 +164,12 @@ pub fn decrypt(manifest_path: &str, output_path: Option<&str>, vault_path: &str)
     let manifest: NexusManifest = serde_json::from_str(&manifest_json)
         .map_err(|e| format!("Invalid manifest: {}", e))?;
 
-    // Decrypt the DEK
-    let dek_key = derive_dek_wrapping_key(&keypair);
-    let mut encrypted_dek_blob = hex_decode(&manifest.dek_nonce)?;
-    encrypted_dek_blob.extend(hex_decode(&manifest.encrypted_dek)?);
-
-    let dek_bytes = decrypt_data(&encrypted_dek_blob, &dek_key)
-        .map_err(|_| "Failed to decrypt DEK — wrong identity or corrupted manifest".to_string())?;
-
-    if dek_bytes.len() != 32 {
-        return Err("Invalid DEK size".into());
-    }
-    let mut dek = [0u8; 32];
-    dek.copy_from_slice(&dek_bytes);
+    // Try owner decryption first
+    let dek = pre_kp.decrypt_dek(&manifest.encrypted_dek)
+        .map_err(|_| {
+            // Maybe we're a recipient with a share grant?
+            "Failed to decrypt DEK — you may need a .nexus-share file if you're not the owner"
+        })?;
 
     // Load shards
     let manifest_dir = Path::new(manifest_path).parent().unwrap_or(Path::new("."));
@@ -191,49 +208,191 @@ pub fn decrypt(manifest_path: &str, output_path: Option<&str>, vault_path: &str)
     Ok(())
 }
 
-pub fn share(_manifest_path: &str, _to_did: &str, _vault_path: &str) -> Result<(), String> {
-    // TODO: Implement once umbral-pre is integrated
-    // Flow:
-    // 1. Load manifest + decrypt DEK with owner's key
-    // 2. Re-encrypt DEK for recipient's DID using umbral PRE
-    // 3. Output a .nexus-share file containing: capsule, cfrag, recipient DID
-    println!("⚠ Share command requires PRE integration (coming in next iteration)");
-    println!("  This will generate a re-encryption key for the recipient's DID.");
+pub fn decrypt_shared(
+    manifest_path: &str,
+    share_path: &str,
+    output_path: Option<&str>,
+    vault_path: &str,
+) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (_keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    // Load manifest
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    // Load share grant
+    let share_json = fs::read_to_string(share_path)
+        .map_err(|e| format!("Failed to read share grant: {}", e))?;
+    let grant: ShareGrant = serde_json::from_str(&share_json)
+        .map_err(|e| format!("Invalid share grant: {}", e))?;
+
+    // Decrypt via re-encrypted cfrags
+    let dek = pre_kp.decrypt_dek_reencrypted(
+        &manifest.encrypted_dek,
+        &grant.cfrags,
+        &manifest.owner_pre_pk,
+        &grant.verifying_key,
+    ).map_err(|e| format!("Delegated decryption failed: {}", e))?;
+
+    // Load shards
+    let manifest_dir = Path::new(manifest_path).parent().unwrap_or(Path::new("."));
+    let shards_dir = manifest_dir.join("shards");
+
+    let mut shards = Vec::new();
+    for cid_hex in &manifest.shards.shards {
+        let shard_path = shards_dir.join(cid_hex);
+        let data = fs::read(&shard_path)
+            .map_err(|e| format!("Failed to read shard {}: {}", cid_hex, e))?;
+        shards.push(nexus_core::storage::shard::Shard {
+            cid: hex_decode(cid_hex)?,
+            data,
+        });
+    }
+
+    // Reassemble and decrypt
+    let encrypted_body = shard::reassemble(&manifest.shards, &shards)
+        .ok_or("Failed to reassemble shards — missing or corrupted")?;
+
+    let plaintext = decrypt_data(&encrypted_body, &dek)
+        .map_err(|_| "Decryption failed — corrupted data".to_string())?;
+
+    let out = output_path
+        .map(|s| s.to_string())
+        .or(manifest.shards.filename.clone())
+        .unwrap_or_else(|| "decrypted_output".into());
+
+    fs::write(&out, &plaintext)
+        .map_err(|e| format!("Failed to write output: {}", e))?;
+
+    println!("✓ Decrypted (shared): {} ({} bytes)", out, plaintext.len());
+
     Ok(())
+}
+
+pub fn share(manifest_path: &str, recipient_pk_path: &str, vault_path: &str) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+    let did = Did::from_public_identity(&keypair.public_identity());
+
+    // Load manifest to verify ownership
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    if manifest.owner != did.0 {
+        return Err("You are not the owner of this file".into());
+    }
+
+    // Load recipient's public key
+    let recipient_json = fs::read_to_string(recipient_pk_path)
+        .map_err(|e| format!("Failed to read recipient key: {}", e))?;
+    let recipient_info: RecipientKey = serde_json::from_str(&recipient_json)
+        .map_err(|e| format!("Invalid recipient key file: {}", e))?;
+
+    // Generate signing key and kfrags (threshold=1, shares=1 for direct 1:1 sharing)
+    let signer = PreSigner::new();
+    let vk = signer.verifying_key();
+
+    let kfrags = signer.generate_kfrags(&pre_kp, &recipient_info.pre_public_key, 1, 1)
+        .map_err(|e| format!("kfrag generation failed: {}", e))?;
+
+    // Re-encrypt the capsule (we act as our own proxy here)
+    let cfrag = pre::reencrypt(
+        &manifest.encrypted_dek,
+        &kfrags[0],
+        &pre_kp.public_key(),
+        &recipient_info.pre_public_key,
+        &vk,
+    ).map_err(|e| format!("Re-encryption failed: {}", e))?;
+
+    // Write share grant
+    let grant = ShareGrant {
+        recipient: recipient_info.did.clone(),
+        recipient_pre_pk: recipient_info.pre_public_key.clone(),
+        cfrags: vec![cfrag],
+        verifying_key: vk,
+        manifest_ref: manifest_path.to_string(),
+    };
+
+    let share_filename = format!(
+        "{}.share-{}.json",
+        Path::new(manifest_path).file_stem().unwrap_or_default().to_string_lossy(),
+        &recipient_info.did[recipient_info.did.len().saturating_sub(8)..]
+    );
+
+    let share_json = serde_json::to_string_pretty(&grant)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+
+    fs::write(&share_filename, share_json)
+        .map_err(|e| format!("Failed to write share grant: {}", e))?;
+
+    println!("✓ Shared with: {}", recipient_info.did);
+    println!("  Grant file: {}", share_filename);
+    println!("  Send this file + the shards to the recipient.");
+    println!("  They can decrypt with: nexus decrypt-shared <manifest> --share {}", share_filename);
+
+    Ok(())
+}
+
+pub fn export_key(vault_path: &str) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+    let did = Did::from_public_identity(&keypair.public_identity());
+
+    let recipient_key = RecipientKey {
+        did: did.0.clone(),
+        pre_public_key: pre_kp.public_key(),
+    };
+
+    let filename = format!("{}.pubkey.json", &did.0[did.0.len().saturating_sub(12)..]);
+    let json = serde_json::to_string_pretty(&recipient_key)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+    fs::write(&filename, &json)
+        .map_err(|e| format!("Failed to write: {}", e))?;
+
+    println!("✓ Exported public key: {}", filename);
+    println!("  Share this file with anyone who wants to send you encrypted files.");
+
+    Ok(())
+}
+
+// --- Data Structures ---
+
+/// Combined vault file (identity + PRE key)
+#[derive(Serialize, Deserialize)]
+struct VaultFile {
+    identity_vault: IdentityVault,
+    pre_seed: String,
+    pre_public_key: PrePublicKey,
+}
+
+/// Exported public key for receiving shared files
+#[derive(Serialize, Deserialize)]
+struct RecipientKey {
+    did: String,
+    pre_public_key: PrePublicKey,
 }
 
 // --- Helpers ---
 
-fn load_keypair(vault_path: &str, passphrase: &str) -> Result<IdentityKeypair, String> {
+fn load_keys(vault_path: &str, passphrase: &str) -> Result<(IdentityKeypair, PreKeypair), String> {
     let json = fs::read_to_string(vault_path)
         .map_err(|e| format!("Failed to read vault: {}", e))?;
-    let vault: IdentityVault = serde_json::from_str(&json)
+    let vault_file: VaultFile = serde_json::from_str(&json)
         .map_err(|e| format!("Invalid vault file: {}", e))?;
-    vault.unseal(passphrase)
-        .map_err(|e| format!("Failed to unlock vault: {}", e))
-}
 
-/// Derive a DEK-wrapping key from the identity keypair
-/// This is a temporary approach — will be replaced by umbral PRE
-fn derive_dek_wrapping_key(keypair: &IdentityKeypair) -> [u8; 32] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    let keypair = vault_file.identity_vault.unseal(passphrase)
+        .map_err(|e| format!("Failed to unlock vault: {}", e))?;
 
-    // Simple KDF: SHA-256 of secret key bytes (placeholder)
-    // TODO: Replace with proper HKDF once umbral handles key wrapping
-    let secret = keypair.to_secret_bytes();
-    let mut key = [0u8; 32];
-    // Use a basic hash — this is temporary until PRE replaces it
-    for (i, chunk) in secret.chunks(4).enumerate() {
-        let mut hasher = DefaultHasher::new();
-        chunk.hash(&mut hasher);
-        i.hash(&mut hasher);
-        let h = hasher.finish().to_le_bytes();
-        let start = (i * 4) % 32;
-        let end = (start + 8).min(32);
-        key[start..end].copy_from_slice(&h[..end - start]);
-    }
-    key
+    let pre_seed = hex_decode(&vault_file.pre_seed)?;
+    let pre_kp = PreKeypair::from_secret_bytes(&pre_seed)
+        .map_err(|e| format!("Failed to restore PRE key: {}", e))?;
+
+    Ok((keypair, pre_kp))
 }
 
 fn prompt_passphrase(prompt: &str) -> Result<String, String> {
