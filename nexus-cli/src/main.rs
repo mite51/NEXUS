@@ -108,6 +108,19 @@ enum Commands {
         #[arg(long, default_value = "vault.json")]
         vault: String,
     },
+    /// Send an encrypted file to a peer (push shards + manifest)
+    Send {
+        /// Path to the .nexus manifest file
+        manifest: String,
+        /// Multiaddr of the recipient peer
+        #[arg(long)]
+        to: String,
+        /// Path to the .share grant file (if sharing with the recipient)
+        #[arg(long)]
+        share: Option<String>,
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
     /// Manage the local shard store
     Store {
         #[command(subcommand)]
@@ -172,6 +185,10 @@ fn main() {
         Commands::Fetch { manifest, from, share, output, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(commands::fetch(&manifest, &from, share.as_deref(), output.as_deref(), &vault))
+        }
+        Commands::Send { manifest, to, share, vault } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(commands::send(&manifest, &to, share.as_deref(), &vault))
         }
         Commands::Store { action } => match action {
             StoreAction::Stats { dir } => commands::store_stats(&dir),

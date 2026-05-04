@@ -519,6 +519,59 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
             Some(NodeEvent::ShardReceived { peer, .. }) => {
                 println!("  📥 Shard response from {}", peer);
             }
+            Some(NodeEvent::ShardPushed { peer, cid, data, channel }) => {
+                // Auto-accept pushed shards and store them
+                let cid_short = &cid[..16.min(cid.len())];
+                match store.put(&nexus_core::storage::Shard {
+                    cid: nexus_core::storage::compute_cid(&data).to_vec(),
+                    data,
+                }) {
+                    Ok(_) => {
+                        println!("  📥 Received shard from {}: {}...", peer, cid_short);
+                        let _ = node.command_tx.send(
+                            nexus_core::network::NodeCommand::RespondShard {
+                                channel,
+                                response: nexus_core::network::protocol::NexusResponse::ShardAccepted { cid },
+                            }
+                        ).await;
+                    }
+                    Err(e) => {
+                        println!("  ❌ Failed to store pushed shard: {}", e);
+                        let _ = node.command_tx.send(
+                            nexus_core::network::NodeCommand::RespondShard {
+                                channel,
+                                response: nexus_core::network::protocol::NexusResponse::Error {
+                                    message: format!("Store failed: {}", e),
+                                },
+                            }
+                        ).await;
+                    }
+                }
+            }
+            Some(NodeEvent::ManifestPushed { peer, manifest_json, share_grant_json, channel }) => {
+                // Save manifest and optional share grant to disk
+                let incoming_dir = ".nexus-incoming";
+                let _ = fs::create_dir_all(incoming_dir);
+
+                // Write manifest
+                let manifest_filename = format!("{}/manifest-{}.nexus", incoming_dir, &peer.to_string()[..8]);
+                let _ = fs::write(&manifest_filename, &manifest_json);
+                println!("  📄 Manifest received from {}: {}", peer, manifest_filename);
+
+                // Write share grant if present
+                if let Some(ref grant_json) = share_grant_json {
+                    let grant_filename = format!("{}/share-{}.json", incoming_dir, &peer.to_string()[..8]);
+                    let _ = fs::write(&grant_filename, grant_json);
+                    println!("  🔑 Share grant saved: {}", grant_filename);
+                }
+
+                let _ = node.command_tx.send(
+                    nexus_core::network::NodeCommand::RespondShard {
+                        channel,
+                        response: nexus_core::network::protocol::NexusResponse::ManifestAccepted,
+                    }
+                ).await;
+            }
             None => {
                 println!("  Node event channel closed — shutting down.");
                 break;
@@ -754,6 +807,148 @@ pub async fn fetch(
         .map_err(|e| format!("Failed to write output: {}", e))?;
 
     println!("  ✓ Decrypted: {} ({} bytes)", out, plaintext.len());
+    Ok(())
+}
+
+pub async fn send(
+    manifest_path: &str,
+    peer_addr: &str,
+    share_path: Option<&str>,
+    vault_path: &str,
+) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, _pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    // Load manifest
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    let filename = manifest.shards.filename.clone().unwrap_or_else(|| "unnamed".into());
+    println!("📤 Sending: {} ({} shards)", filename, manifest.shards.shards.len());
+
+    // Load optional share grant
+    let share_json = if let Some(path) = share_path {
+        Some(fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read share grant: {}", e))?)
+    } else {
+        None
+    };
+
+    // Parse peer address
+    let addr: libp2p::Multiaddr = peer_addr.parse()
+        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
+    let target_peer = addr.iter()
+        .find_map(|p| if let libp2p::multiaddr::Protocol::P2p(pid) = p { Some(pid) } else { None })
+        .ok_or("Peer address must end with /p2p/<peer_id>")?;
+
+    // Start ephemeral node
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+    let config = NodeConfig {
+        listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
+        bootstrap_peers: vec![],
+        mdns_enabled: false,
+    };
+
+    let mut node = NexusNode::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start node: {}", e))?;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Dial the peer
+    println!("  Connecting to {}...", target_peer);
+    node.dial(addr).await.map_err(|e| format!("Dial failed: {}", e))?;
+
+    // Wait for connection
+    let connected = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::PeerDiscovered(p) = event {
+                if p == target_peer { return true; }
+            }
+        }
+        false
+    }).await.unwrap_or(false);
+
+    if !connected {
+        node.shutdown().await.ok();
+        return Err("Failed to connect to peer within 10s".into());
+    }
+    println!("  ✅ Connected");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Load shards from local store or manifest directory
+    let store = ShardStore::open(".nexus-store").ok();
+    let manifest_dir = Path::new(manifest_path).parent().unwrap_or(Path::new("."));
+    let shards_dir = manifest_dir.join("shards");
+    let total = manifest.shards.shards.len();
+
+    for (i, cid_hex) in manifest.shards.shards.iter().enumerate() {
+        // Try local store first, then shards directory
+        let shard_data = if let Some(ref store) = store {
+            store.get(cid_hex).ok().flatten().map(|s| s.data)
+        } else {
+            None
+        }.or_else(|| {
+            let shard_path = shards_dir.join(cid_hex);
+            fs::read(&shard_path).ok()
+        });
+
+        let data = shard_data.ok_or_else(|| format!("Shard not found: {}", cid_hex))?;
+
+        // Push shard to peer
+        node.push_shard(target_peer, cid_hex.clone(), data).await
+            .map_err(|e| format!("Push failed: {}", e))?;
+
+        // Wait for acknowledgment
+        let ack = tokio::time::timeout(Duration::from_secs(30), async {
+            while let Some(event) = node.event_rx.recv().await {
+                if let NodeEvent::ShardReceived { response, .. } = event {
+                    return Some(response);
+                }
+            }
+            None
+        }).await;
+
+        match ack {
+            Ok(Some(nexus_core::network::protocol::NexusResponse::ShardAccepted { .. })) => {
+                println!("  [{}/{}] ⬆️  Pushed: {}...", i + 1, total, &cid_hex[..16.min(cid_hex.len())]);
+            }
+            Ok(Some(nexus_core::network::protocol::NexusResponse::Error { message })) => {
+                node.shutdown().await.ok();
+                return Err(format!("Peer rejected shard: {}", message));
+            }
+            _ => {
+                println!("  [{}/{}] ⚠️  No ack (continuing): {}...", i + 1, total, &cid_hex[..16.min(cid_hex.len())]);
+            }
+        }
+    }
+
+    // Push manifest + share grant
+    node.push_manifest(target_peer, manifest_json, share_json).await
+        .map_err(|e| format!("Manifest push failed: {}", e))?;
+
+    // Wait for manifest ack
+    let manifest_ack = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::ShardReceived { response, .. } = event {
+                return Some(response);
+            }
+        }
+        None
+    }).await;
+
+    match manifest_ack {
+        Ok(Some(nexus_core::network::protocol::NexusResponse::ManifestAccepted)) => {
+            println!("  📄 Manifest delivered");
+        }
+        _ => {
+            println!("  ⚠️  Manifest ack not received (peer may still have it)");
+        }
+    }
+
+    node.shutdown().await.ok();
+    println!("  ✓ Send complete: {} ({} shards transferred)", filename, total);
     Ok(())
 }
 

@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 pub enum NexusRequest {
     /// Request a shard by its CID (hex-encoded)
     GetShard { cid: String },
+    /// Push a shard to a peer (sender-initiated transfer)
+    PushShard { cid: String, data: Vec<u8> },
+    /// Push a manifest + optional share grant to a peer
+    PushManifest {
+        manifest_json: String,
+        share_grant_json: Option<String>,
+    },
     /// Deliver kfrags to a recipient
     DeliverKfrags {
         manifest_id: String,
@@ -25,6 +32,10 @@ pub enum NexusResponse {
     Shard { cid: String, data: Vec<u8> },
     /// Shard not found
     ShardNotFound { cid: String },
+    /// Acknowledge a pushed shard was stored
+    ShardAccepted { cid: String },
+    /// Acknowledge a pushed manifest was stored
+    ManifestAccepted,
     /// kfrag delivery acknowledged
     KfragsReceived { manifest_id: String },
     /// Pong (health check response)

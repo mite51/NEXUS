@@ -62,6 +62,20 @@ pub enum NodeEvent {
         peer: PeerId,
         response: NexusResponse,
     },
+    /// A peer pushed a shard to us
+    ShardPushed {
+        peer: PeerId,
+        cid: String,
+        data: Vec<u8>,
+        channel: request_response::ResponseChannel<NexusResponse>,
+    },
+    /// A peer pushed a manifest (+ optional share grant) to us
+    ManifestPushed {
+        peer: PeerId,
+        manifest_json: String,
+        share_grant_json: Option<String>,
+        channel: request_response::ResponseChannel<NexusResponse>,
+    },
     /// Received kfrags from another peer
     KfragsReceived {
         peer: PeerId,
@@ -85,6 +99,10 @@ pub enum NodeCommand {
     Dial(Multiaddr),
     /// Request a shard from a peer
     RequestShard { peer: PeerId, cid: String },
+    /// Push a shard to a peer
+    PushShard { peer: PeerId, cid: String, data: Vec<u8> },
+    /// Push a manifest to a peer
+    PushManifest { peer: PeerId, manifest_json: String, share_grant_json: Option<String> },
     /// Send kfrags to a peer
     SendKfrags {
         peer: PeerId,
@@ -182,6 +200,18 @@ impl NexusNode {
                                     NexusRequest::GetShard { cid },
                                 );
                             }
+                            NodeCommand::PushShard { peer, cid, data } => {
+                                swarm.behaviour_mut().request_response.send_request(
+                                    &peer,
+                                    NexusRequest::PushShard { cid, data },
+                                );
+                            }
+                            NodeCommand::PushManifest { peer, manifest_json, share_grant_json } => {
+                                swarm.behaviour_mut().request_response.send_request(
+                                    &peer,
+                                    NexusRequest::PushManifest { manifest_json, share_grant_json },
+                                );
+                            }
                             NodeCommand::SendKfrags { peer, manifest_id, kfrags, verifying_key, sender_pre_pk } => {
                                 swarm.behaviour_mut().request_response.send_request(
                                     &peer,
@@ -239,6 +269,16 @@ impl NexusNode {
     /// Request a shard from a specific peer
     pub async fn request_shard(&self, peer: PeerId, cid: String) -> Result<(), mpsc::error::SendError<NodeCommand>> {
         self.command_tx.send(NodeCommand::RequestShard { peer, cid }).await
+    }
+
+    /// Push a shard to a peer
+    pub async fn push_shard(&self, peer: PeerId, cid: String, data: Vec<u8>) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::PushShard { peer, cid, data }).await
+    }
+
+    /// Push a manifest (+ optional share grant) to a peer
+    pub async fn push_manifest(&self, peer: PeerId, manifest_json: String, share_grant_json: Option<String>) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::PushManifest { peer, manifest_json, share_grant_json }).await
     }
 
     /// Send kfrags to a recipient peer
@@ -319,6 +359,22 @@ async fn handle_swarm_event(
                             // Auto-respond to pings
                             let _ = _swarm.behaviour_mut().request_response
                                 .send_response(channel, NexusResponse::Pong);
+                        }
+                        NexusRequest::PushShard { cid, data } => {
+                            let _ = event_tx.send(NodeEvent::ShardPushed {
+                                peer,
+                                cid,
+                                data,
+                                channel,
+                            }).await;
+                        }
+                        NexusRequest::PushManifest { manifest_json, share_grant_json } => {
+                            let _ = event_tx.send(NodeEvent::ManifestPushed {
+                                peer,
+                                manifest_json,
+                                share_grant_json,
+                                channel,
+                            }).await;
                         }
                     }
                 }
