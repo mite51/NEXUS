@@ -161,3 +161,23 @@ export async function decryptReceived(receivedId: string, vaultPath: string, pas
 export async function removeReceived(id: string): Promise<void> {
   return invoke('remove_received', { id });
 }
+
+// Node lifecycle
+export interface NodeInfo {
+  running: boolean;
+  peer_id: string | null;
+  listen_addrs: string[];
+  connected_peers: string[];
+}
+
+export async function startNode(vaultPath: string, passphrase: string, listenPort?: number): Promise<string> {
+  return invoke('start_node', { vaultPath, passphrase, listenPort });
+}
+
+export async function stopNode(): Promise<void> {
+  return invoke('stop_node');
+}
+
+export async function getNodeInfo(): Promise<NodeInfo> {
+  return invoke('get_node_info');
+}

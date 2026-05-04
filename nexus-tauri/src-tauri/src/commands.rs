@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use rand::Rng;
+use tauri::State;
 
 use nexus_core::identity::{IdentityKeypair, IdentityVault, Did};
 use nexus_core::crypto::pre::{PreKeypair, PreSigner, PrePublicKey, reencrypt};
@@ -10,7 +11,9 @@ use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
 use nexus_core::storage::{ReceivedFiles, ReceivedFile};
-use nexus_core::network::{SendQueue, QueuedSend, SendStatus};
+use nexus_core::network::{SendQueue, QueuedSend, SendStatus, NodeConfig};
+
+use crate::node_state::{NodeState, NodeInfo};
 
 // --- Response types ---
 
@@ -599,4 +602,38 @@ pub fn decrypt_received(
 pub fn remove_received(id: &str) -> Result<(), String> {
     let store = ReceivedFiles::open(RECEIVED_FILES_PATH);
     store.remove(id)
+}
+
+// --- Node lifecycle commands ---
+
+#[tauri::command]
+pub async fn start_node(
+    vault_path: &str,
+    passphrase: &str,
+    listen_port: Option<u16>,
+    state: State<'_, NodeState>,
+) -> Result<String, String> {
+    let (keypair, _pre_kp) = load_keys(vault_path, passphrase)?;
+
+    let port = listen_port.unwrap_or(0);
+    let config = NodeConfig {
+        listen_addrs: vec![
+            format!("/ip4/0.0.0.0/tcp/{}", port),
+            format!("/ip4/0.0.0.0/udp/{}/quic-v1", port),
+        ],
+        bootstrap_peers: vec![],
+        mdns_enabled: true,
+    };
+
+    state.start(keypair, config).await
+}
+
+#[tauri::command]
+pub async fn stop_node(state: State<'_, NodeState>) -> Result<(), String> {
+    state.stop().await
+}
+
+#[tauri::command]
+pub async fn get_node_info(state: State<'_, NodeState>) -> Result<NodeInfo, String> {
+    Ok(state.info().await)
 }

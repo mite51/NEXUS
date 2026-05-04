@@ -1,11 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod node_state;
+
+use node_state::NodeState;
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(NodeState::new())
         .invoke_handler(tauri::generate_handler![
             commands::create_identity,
             commands::get_identity,
@@ -25,6 +29,9 @@ fn main() {
             commands::list_received_files,
             commands::decrypt_received,
             commands::remove_received,
+            commands::start_node,
+            commands::stop_node,
+            commands::get_node_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

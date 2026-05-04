@@ -122,6 +122,8 @@ pub enum NodeCommand {
     },
     /// Get our listening addresses
     GetListeningAddrs(tokio::sync::oneshot::Sender<Vec<Multiaddr>>),
+    /// Get connected peers
+    GetConnectedPeers(tokio::sync::oneshot::Sender<Vec<PeerId>>),
     /// Shutdown
     Shutdown,
 }
@@ -238,6 +240,10 @@ impl NexusNode {
                                 let addrs: Vec<Multiaddr> = swarm.listeners().cloned().collect();
                                 let _ = tx.send(addrs);
                             }
+                            NodeCommand::GetConnectedPeers(tx) => {
+                                let peers: Vec<PeerId> = swarm.connected_peers().cloned().collect();
+                                let _ = tx.send(peers);
+                            }
                             NodeCommand::Shutdown => break,
                         }
                     }
@@ -309,6 +315,13 @@ impl NexusNode {
     pub async fn listening_addrs(&self) -> Result<Vec<Multiaddr>, Box<dyn std::error::Error>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.command_tx.send(NodeCommand::GetListeningAddrs(tx)).await?;
+        Ok(rx.await?)
+    }
+
+    /// Get currently connected peers
+    pub async fn connected_peers(&self) -> Result<Vec<PeerId>, Box<dyn std::error::Error>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.command_tx.send(NodeCommand::GetConnectedPeers(tx)).await?;
         Ok(rx.await?)
     }
 

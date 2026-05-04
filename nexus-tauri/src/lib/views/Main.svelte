@@ -11,6 +11,7 @@
   import ContactsView from './ContactsView.svelte';
   import SendQueueView from './SendQueueView.svelte';
   import SharedWithMeView from './SharedWithMeView.svelte';
+  import PeersView from './PeersView.svelte';
 
   export let vaultPath: string;
 
@@ -150,11 +151,7 @@
       {:else if $currentView === 'contacts'}
         <ContactsView />
       {:else if $currentView === 'peers'}
-        <div class="empty">
-          <span class="icon">🌐</span>
-          <p>Node is offline</p>
-          <p class="hint">Start the node to discover peers on your network</p>
-        </div>
+        <PeersView {vaultPath} />
       {:else}
         <StoreView />
       {/if}
