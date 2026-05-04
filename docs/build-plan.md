@@ -14,7 +14,7 @@
 | **Storage** | Custom CAS with IPFS-compatible CIDs | Privacy by default, no metadata leakage to public DHTs, IPFS export optional |
 | **Frontend** | Svelte + TypeScript | Simple mental model, tiny bundles, great DX |
 | **License** | GPL-3.0 | Aligned with anti-silo philosophy, compatible with rust-umbral |
-| **Platforms** | Windows, Linux, macOS, Android, iOS, Web | Tauri 2.0 (desktop+mobile) + WASM (web) |
+| **Platforms** | Windows, Linux, macOS, Android, iOS | Tauri 2.0 (desktop+mobile) |
 
 ---
 
@@ -39,7 +39,6 @@ NEXUS/
 │   │   ├── routes/
 │   │   └── stores/
 │   └── package.json
-├── nexus-web/           # WASM bridge for browser clients (Phase 6+)
 ├── docs/
 │   ├── Project_Nexus_PRD_v1.0.pdf
 │   ├── Project_Nexus_SRD_v1.0.pdf
@@ -53,12 +52,10 @@ NEXUS/
 
 ```
 nexus-core (Rust crate)
-├── → Native binary (linked into nexus-tauri for desktop/mobile)
-└── → WASM (compiled for nexus-web browser client)
+└── → Native binary (linked into nexus-tauri for desktop/mobile)
 
 nexus-ui (Svelte)
-├── → Bundled into Tauri app (desktop/mobile)
-└── → Served as static SPA (web, connects via WASM or WebSocket to home server)
+└── → Bundled into Tauri app (desktop/mobile)
 ```
 
 ---
@@ -69,9 +66,8 @@ nexus-ui (Svelte)
 |----------|---------|------------|-------|
 | Windows / Linux / macOS | Tauri 2.0 (native) | Full libp2p (QUIC + TCP) | Primary development target |
 | Android / iOS | Tauri 2.0 (mobile) | libp2p (QUIC preferred) | Tauri 2.0 mobile support |
-| Web browser | WASM + Svelte SPA | WebSocket/WebRTC to relay | Requires home server or public relay for networking |
 
-**Design principle:** `nexus-core` has zero Tauri dependencies. It compiles standalone. Platform-specific code lives only in the shell layers (nexus-tauri, nexus-web).
+**Design principle:** `nexus-core` has zero Tauri dependencies. It compiles standalone. Platform-specific code lives only in the shell layer (nexus-tauri).
 
 ---
 
@@ -137,9 +133,8 @@ PRE enables identity migration without re-encrypting data:
 ### Phase 6: Polish & Expansion
 19. **Social Recovery** — Shamir's SSS, guardian selection, recovery flow
 20. **Plugin marketplace** — Package format, sandboxed WASM runtime
-21. **Web client** — nexus-web WASM bridge, WebSocket relay
-22. **Mobile** — Tauri 2.0 mobile builds (Android/iOS)
-23. **Onboarding UX** — QR codes, magic links, first-run experience
+21. **Mobile** — Tauri 2.0 mobile builds (Android/iOS)
+22. **Onboarding UX** — QR codes, magic links, first-run experience
 
 ---
 
@@ -164,4 +159,4 @@ PRE enables identity migration without re-encrypting data:
 | `typescript` | Type safety |
 | `@tauri-apps/api` | Tauri IPC bridge |
 
-**Principle:** Every dependency must justify its existence. Prefer `no_std`-compatible crates where possible for future WASM compilation.
+**Principle:** Every dependency must justify its existence.
