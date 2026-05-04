@@ -4,4 +4,4 @@
 
 pub mod shard;
 
-pub use shard::{Shard, ShardManifest, shard_data};
+pub use shard::{Shard, ShardManifest, shard_data, reassemble, DEFAULT_SHARD_SIZE};
