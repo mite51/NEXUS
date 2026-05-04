@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { identity, files, currentView, nodeOnline, didShort, showToast } from '../stores/app';
-  import { listFiles } from '../ipc';
+  import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
+  import { listFiles, pickFileToEncrypt, encryptFile } from '../ipc';
   import FileGrid from '../components/FileGrid.svelte';
   import Sidebar from '../components/Sidebar.svelte';
 
@@ -19,6 +19,21 @@
     if (id) {
       navigator.clipboard.writeText(id.did);
       showToast('DID copied to clipboard');
+    }
+  }
+
+  async function handleEncrypt() {
+    const filePath = await pickFileToEncrypt();
+    if (!filePath) return;
+
+    try {
+      const result = await encryptFile(filePath, vaultPath, $passphrase);
+      showToast(`✓ Encrypted: ${result.filename} (${result.shard_count} shards)`);
+      // Refresh file list
+      const f = await listFiles();
+      files.set(f);
+    } catch (e: any) {
+      showToast(`Error: ${e}`);
     }
   }
 </script>
@@ -40,7 +55,7 @@
     }</h2>
     <div class="spacer"></div>
     {#if $currentView === 'files'}
-      <button class="primary-btn">+ Encrypt File</button>
+      <button class="primary-btn" on:click={handleEncrypt}>+ Encrypt File</button>
     {/if}
   </div>
 

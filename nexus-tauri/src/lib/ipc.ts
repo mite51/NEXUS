@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
 // Types matching Tauri backend responses
 export interface IdentityInfo {
@@ -47,4 +48,21 @@ export async function getStoreStats(): Promise<StoreStatsResult> {
 
 export async function listFiles(): Promise<FileEntry[]> {
   return invoke('list_files');
+}
+
+// File dialogs
+export async function pickFileToEncrypt(): Promise<string | null> {
+  const result = await open({
+    title: 'Choose a file to encrypt',
+    multiple: false,
+  });
+  return result ?? null;
+}
+
+export async function pickSaveLocation(defaultName: string): Promise<string | null> {
+  const result = await save({
+    title: 'Save decrypted file',
+    defaultPath: defaultName,
+  });
+  return result ?? null;
 }
