@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
   import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import FileGrid from '../components/FileGrid.svelte';
   import DetailPanel from '../components/DetailPanel.svelte';
   import ContactPicker from '../components/ContactPicker.svelte';
@@ -23,6 +24,8 @@
   let encrypting = false;
   let decrypting = false;
   let loadingFiles = true;
+  let dragOver = false;
+  let unlistenDrop: (() => void) | null = null;
 
   onMount(async () => {
     try {
@@ -30,6 +33,28 @@
       files.set(f);
     } catch (e) { console.error('Failed to list files:', e); }
     loadingFiles = false;
+
+    // Listen for drag-and-drop
+    const appWindow = getCurrentWindow();
+    unlistenDrop = await appWindow.onDragDropEvent(async (event) => {
+      if (event.payload.type === 'over') {
+        dragOver = true;
+      } else if (event.payload.type === 'drop') {
+        dragOver = false;
+        const paths = event.payload.paths;
+        if (paths && paths.length > 0) {
+          for (const filePath of paths) {
+            await handleEncryptPath(filePath);
+          }
+        }
+      } else {
+        dragOver = false;
+      }
+    });
+  });
+
+  onDestroy(() => {
+    if (unlistenDrop) unlistenDrop();
   });
 
   function handleCopyDid() {
@@ -43,7 +68,10 @@
   async function handleEncrypt() {
     const filePath = await pickFileToEncrypt();
     if (!filePath) return;
+    await handleEncryptPath(filePath);
+  }
 
+  async function handleEncryptPath(filePath: string) {
     encrypting = true;
     try {
       const result = await encryptFile(filePath, vaultPath, $passphrase);
@@ -135,7 +163,15 @@
   on:copyDid={handleCopyDid}
 />
 
-<main class="main">
+<main class="main" class:drag-over={dragOver}>
+  {#if dragOver}
+    <div class="drop-overlay">
+      <div class="drop-content">
+        <span class="drop-icon">🔒</span>
+        <p>Drop to encrypt</p>
+      </div>
+    </div>
+  {/if}
   <div class="toolbar">
     <h2>{
       $currentView === 'files' ? 'My Files' :
@@ -231,4 +267,15 @@
     height: 100%;
   }
   .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .main.drag-over { position: relative; }
+  .drop-overlay {
+    position: absolute; inset: 0; z-index: 100;
+    background: rgba(99, 102, 241, 0.08);
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .drop-content { text-align: center; }
+  .drop-icon { font-size: 48px; display: block; margin-bottom: 8px; }
+  .drop-content p { font-size: 16px; color: var(--accent); font-weight: 600; }
 </style>
