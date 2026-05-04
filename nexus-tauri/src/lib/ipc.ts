@@ -66,3 +66,27 @@ export async function pickSaveLocation(defaultName: string): Promise<string | nu
   });
   return result ?? null;
 }
+
+// Contacts
+export interface Contact {
+  name: string;
+  did: string;
+  pre_public_key_hex?: string;
+  notes?: string;
+}
+
+export async function addContact(name: string, did: string, prePublicKeyHex?: string, notes?: string): Promise<Contact> {
+  return invoke('add_contact', { name, did, prePublicKeyHex, notes });
+}
+
+export async function listContacts(): Promise<Contact[]> {
+  return invoke('list_contacts');
+}
+
+export async function removeContact(did: string): Promise<void> {
+  return invoke('remove_contact', { did });
+}
+
+export async function updateContact(did: string, name?: string, prePublicKeyHex?: string, notes?: string): Promise<Contact> {
+  return invoke('update_contact', { did, name, prePublicKeyHex, notes });
+}

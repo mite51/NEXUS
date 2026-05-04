@@ -2,15 +2,18 @@
   import { onMount } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
   import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation } from '../ipc';
-  import type { FileEntry } from '../ipc';
+  import type { FileEntry, Contact } from '../ipc';
   import FileGrid from '../components/FileGrid.svelte';
   import DetailPanel from '../components/DetailPanel.svelte';
+  import ContactPicker from '../components/ContactPicker.svelte';
   import Sidebar from '../components/Sidebar.svelte';
   import StoreView from './StoreView.svelte';
 
   export let vaultPath: string;
 
   let selectedFile: FileEntry | null = null;
+  let pickerMode: 'share' | 'send' | null = null;
+  let pickerFile: FileEntry | null = null;
 
   onMount(async () => {
     try {
@@ -59,11 +62,29 @@
   }
 
   function handleShare(e: CustomEvent<FileEntry>) {
-    showToast('Share flow coming soon');
+    pickerFile = e.detail;
+    pickerMode = 'share';
   }
 
   function handleSend(e: CustomEvent<FileEntry>) {
-    showToast('Send flow coming soon');
+    pickerFile = e.detail;
+    pickerMode = 'send';
+  }
+
+  function handleContactSelected(e: CustomEvent<Contact>) {
+    const contact = e.detail;
+    if (pickerMode === 'share') {
+      showToast(`Share with ${contact.name} — PRE grant flow coming soon`);
+    } else if (pickerMode === 'send') {
+      showToast(`Send to ${contact.name} — P2P push flow coming soon`);
+    }
+    pickerMode = null;
+    pickerFile = null;
+  }
+
+  function handlePickerCancel() {
+    pickerMode = null;
+    pickerFile = null;
   }
 </script>
 
@@ -120,6 +141,15 @@
     {/if}
   </div>
 </main>
+
+{#if pickerMode}
+  <ContactPicker
+    title={pickerMode === 'share' ? 'Share With' : 'Send To'}
+    actionLabel={pickerMode === 'share' ? 'Share' : 'Send'}
+    on:select={handleContactSelected}
+    on:cancel={handlePickerCancel}
+  />
+{/if}
 
 <style>
   .main {

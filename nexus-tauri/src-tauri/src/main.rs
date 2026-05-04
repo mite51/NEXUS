@@ -13,6 +13,10 @@ fn main() {
             commands::decrypt_file,
             commands::get_store_stats,
             commands::list_files,
+            commands::add_contact,
+            commands::list_contacts,
+            commands::remove_contact,
+            commands::update_contact,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

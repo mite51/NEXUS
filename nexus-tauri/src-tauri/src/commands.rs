@@ -72,6 +72,40 @@ fn load_keys(vault_path: &str, passphrase: &str) -> Result<(IdentityKeypair, Pre
     Ok((keypair, pre_kp))
 }
 
+// --- Contacts ---
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Contact {
+    pub name: String,
+    pub did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_public_key_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ContactsFile {
+    contacts: Vec<Contact>,
+}
+
+const CONTACTS_PATH: &str = ".nexus-contacts.json";
+
+fn load_contacts() -> ContactsFile {
+    fs::read_to_string(CONTACTS_PATH)
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn save_contacts(file: &ContactsFile) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(file)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+    fs::write(CONTACTS_PATH, json)
+        .map_err(|e| format!("Failed to write contacts: {}", e))?;
+    Ok(())
+}
+
 // --- Tauri Commands ---
 
 #[tauri::command]
@@ -252,4 +286,58 @@ pub fn list_files() -> Result<Vec<FileEntry>, String> {
     }
 
     Ok(files)
+}
+
+#[tauri::command]
+pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, notes: Option<&str>) -> Result<Contact, String> {
+    let mut file = load_contacts();
+
+    // Check for duplicate DID
+    if file.contacts.iter().any(|c| c.did == did) {
+        return Err("Contact with this DID already exists".into());
+    }
+
+    let contact = Contact {
+        name: name.to_string(),
+        did: did.to_string(),
+        pre_public_key_hex: pre_public_key_hex.map(|s| s.to_string()),
+        notes: notes.map(|s| s.to_string()),
+    };
+
+    file.contacts.push(contact.clone());
+    save_contacts(&file)?;
+    Ok(contact)
+}
+
+#[tauri::command]
+pub fn list_contacts() -> Result<Vec<Contact>, String> {
+    Ok(load_contacts().contacts)
+}
+
+#[tauri::command]
+pub fn remove_contact(did: &str) -> Result<(), String> {
+    let mut file = load_contacts();
+    let before = file.contacts.len();
+    file.contacts.retain(|c| c.did != did);
+    if file.contacts.len() == before {
+        return Err("Contact not found".into());
+    }
+    save_contacts(&file)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_contact(did: &str, name: Option<&str>, pre_public_key_hex: Option<&str>, notes: Option<&str>) -> Result<Contact, String> {
+    let mut file = load_contacts();
+    let contact = file.contacts.iter_mut()
+        .find(|c| c.did == did)
+        .ok_or("Contact not found")?;
+
+    if let Some(n) = name { contact.name = n.to_string(); }
+    if let Some(pk) = pre_public_key_hex { contact.pre_public_key_hex = Some(pk.to_string()); }
+    if let Some(n) = notes { contact.notes = Some(n.to_string()); }
+
+    let updated = contact.clone();
+    save_contacts(&file)?;
+    Ok(updated)
 }
