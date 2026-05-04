@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile } from '../ipc';
+  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import FileGrid from '../components/FileGrid.svelte';
   import DetailPanel from '../components/DetailPanel.svelte';
@@ -91,8 +91,18 @@
           showToast(`Share error: ${e}`);
         }
       }
-    } else if (pickerMode === 'send') {
-      showToast(`Send to ${contact.name} — P2P push flow coming soon`);
+    } else if (pickerMode === 'send' && pickerFile) {
+      const peerId = contact.did.replace('did:nexus:', '');
+      try {
+        await queueSend(
+          pickerFile.manifest_path,
+          contact.did,
+          peerId
+        );
+        showToast(`✓ Queued send to ${contact.name} — will deliver when online`);
+      } catch (e: any) {
+        showToast(`Send error: ${e}`);
+      }
     }
     pickerMode = null;
     pickerFile = null;

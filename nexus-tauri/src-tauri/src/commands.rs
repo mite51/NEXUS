@@ -9,6 +9,7 @@ use nexus_core::crypto::{encrypt_data, decrypt_data, generate_dek};
 use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
+use nexus_core::network::{SendQueue, QueuedSend, SendStatus};
 
 // --- Response types ---
 
@@ -411,4 +412,86 @@ pub fn share_file(
         recipient: recipient_did.to_string(),
         cfrags_count: 1,
     })
+}
+
+const SEND_QUEUE_PATH: &str = ".nexus-send-queue.json";
+
+#[derive(Serialize)]
+pub struct QueuedSendInfo {
+    pub id: String,
+    pub recipient_did: String,
+    pub recipient_peer_id: String,
+    pub filename: String,
+    pub status: String,
+    pub queued_at: u64,
+    pub attempts: u32,
+}
+
+impl From<QueuedSend> for QueuedSendInfo {
+    fn from(s: QueuedSend) -> Self {
+        let status = match &s.status {
+            SendStatus::Pending => "pending".to_string(),
+            SendStatus::InProgress => "in_progress".to_string(),
+            SendStatus::Delivered => "delivered".to_string(),
+            SendStatus::Failed { reason } => format!("failed: {}", reason),
+        };
+        Self {
+            id: s.id,
+            recipient_did: s.recipient_did,
+            recipient_peer_id: s.recipient_peer_id,
+            filename: s.filename,
+            status,
+            queued_at: s.queued_at,
+            attempts: s.attempts,
+        }
+    }
+}
+
+#[tauri::command]
+pub fn queue_send(
+    manifest_path: &str,
+    recipient_did: &str,
+    recipient_peer_id: &str,
+    recipient_addr: Option<&str>,
+    share_grant_json: Option<&str>,
+) -> Result<QueuedSendInfo, String> {
+    // Load manifest to get filename + shard CIDs
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    let filename = manifest.shards.filename.unwrap_or_else(|| "unnamed".into());
+    let shard_cids = manifest.shards.shards.clone();
+
+    let queue = SendQueue::open(SEND_QUEUE_PATH);
+    let send = queue.enqueue(
+        recipient_did.to_string(),
+        recipient_peer_id.to_string(),
+        recipient_addr.map(|s| s.to_string()),
+        manifest_path.to_string(),
+        filename,
+        share_grant_json.map(|s| s.to_string()),
+        shard_cids,
+    )?;
+
+    Ok(send.into())
+}
+
+#[tauri::command]
+pub fn list_send_queue() -> Result<Vec<QueuedSendInfo>, String> {
+    let queue = SendQueue::open(SEND_QUEUE_PATH);
+    Ok(queue.all().into_iter().map(|s| s.into()).collect())
+}
+
+#[tauri::command]
+pub fn cancel_send(id: &str) -> Result<(), String> {
+    let queue = SendQueue::open(SEND_QUEUE_PATH);
+    queue.remove(id)
+}
+
+#[tauri::command]
+pub fn retry_send(id: &str) -> Result<(), String> {
+    let queue = SendQueue::open(SEND_QUEUE_PATH);
+    queue.retry(id)
 }
