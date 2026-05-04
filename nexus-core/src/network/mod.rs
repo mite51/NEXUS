@@ -10,7 +10,9 @@ pub mod node;
 pub mod behaviour;
 pub mod protocol;
 pub mod send_queue;
+pub mod delivery;
 
 pub use node::{NexusNode, NodeConfig, NodeEvent, NodeCommand};
 pub use behaviour::NexusBehaviour;
 pub use send_queue::{SendQueue, QueuedSend, SendStatus};
+pub use delivery::{spawn_delivery_worker, DeliveryConfig};

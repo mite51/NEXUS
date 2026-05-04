@@ -10,6 +10,7 @@
   const navItems = [
     { id: 'files', icon: '📁', label: 'My Files' },
     { id: 'shared', icon: '📨', label: 'Shared With Me' },
+    { id: 'outbox', icon: '📤', label: 'Outbox' },
     { id: 'contacts', icon: '👤', label: 'Contacts' },
     { id: 'peers', icon: '🌐', label: 'Peers' },
     { id: 'store', icon: '📦', label: 'Store' },

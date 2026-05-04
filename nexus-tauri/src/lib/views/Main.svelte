@@ -9,6 +9,7 @@
   import Sidebar from '../components/Sidebar.svelte';
   import StoreView from './StoreView.svelte';
   import ContactsView from './ContactsView.svelte';
+  import SendQueueView from './SendQueueView.svelte';
 
   export let vaultPath: string;
 
@@ -127,6 +128,7 @@
     <h2>{
       $currentView === 'files' ? 'My Files' :
       $currentView === 'shared' ? 'Shared With Me' :
+      $currentView === 'outbox' ? 'Outbox' :
       $currentView === 'contacts' ? 'Contacts' :
       $currentView === 'peers' ? 'Peers' : 'Store'
     }</h2>
@@ -146,6 +148,8 @@
           <p>No shared files yet</p>
           <p class="hint">Files shared with you via PRE will appear here</p>
         </div>
+      {:else if $currentView === 'outbox'}
+        <SendQueueView />
       {:else if $currentView === 'contacts'}
         <ContactsView />
       {:else if $currentView === 'peers'}
