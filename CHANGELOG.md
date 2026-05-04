@@ -43,3 +43,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - Supports both owner decryption and shared access (via `--share` grant)
   - Auto-caches fetched shards in local store for future serving
   - ShardReceived event for receiving shard responses from peers
+- **`nexus send` command**: push-based file transfer
+  - Push shards + manifest + optional share grant to a peer
+  - PushShard/PushManifest protocol messages with acknowledgment
+  - Receiving node auto-stores pushed shards and saves manifests to `.nexus-incoming/`
+- **PRE Shared Access E2E Proven**:
+  - Alice encrypts → generates PRE share grant → Bob fetches over P2P → decrypts with cfrags
+  - Bob never sees Alice's private key — proves the NEXUS thesis
+- **NexusManifest extracted to nexus-core**:
+  - Shared types (`NexusManifest`, `ShareGrant`) in `nexus-core::manifest`
+  - CLI and Tauri both import from single source of truth
+- **Tauri 2.0 GUI (Phase 3 start)**:
+  - Svelte 5 + TypeScript + Vite 8 frontend
+  - Dark theme with responsive three-panel layout
+  - Setup screen (create identity), unlock screen, main file grid
+  - Sidebar navigation, file card grid, detail panel with actions
+  - Store view with shard stats
+  - File dialog integration (native picker for encrypt)
+  - Decrypt flow via save dialog
+  - IPC layer: all Tauri commands typed
+  - Design doc: `docs/gui-design.md`
