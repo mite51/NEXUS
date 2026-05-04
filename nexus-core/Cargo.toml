@@ -1,0 +1,27 @@
+[package]
+name = "nexus-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core library for NEXUS — identity, crypto, storage, networking"
+
+[dependencies]
+# Crypto
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Content addressing
+multihash = { version = "0.19", default-features = false, features = ["std"] }
+sha2 = "0.10"
+
+# Error handling
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
