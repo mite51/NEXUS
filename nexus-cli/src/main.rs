@@ -92,6 +92,42 @@ enum Commands {
         #[arg(long, default_value = "vault.json")]
         vault: String,
     },
+    /// Manage the local shard store
+    Store {
+        #[command(subcommand)]
+        action: StoreAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum StoreAction {
+    /// Show store statistics
+    Stats {
+        /// Store directory
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// List all shards in the store
+    List {
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Import shards from an encrypted file's manifest
+    Import {
+        /// Path to the .nexus manifest file
+        manifest: String,
+        /// Shard source directory (where .shard files live)
+        #[arg(long, default_value = ".")]
+        from: String,
+        /// Store directory
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Verify integrity of stored shards
+    Verify {
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
 }
 
 fn main() {
@@ -117,6 +153,12 @@ fn main() {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(commands::ping_peer(&vault, &addr))
         }
+        Commands::Store { action } => match action {
+            StoreAction::Stats { dir } => commands::store_stats(&dir),
+            StoreAction::List { dir } => commands::store_list(&dir),
+            StoreAction::Import { manifest, from, dir } => commands::store_import(&manifest, &from, &dir),
+            StoreAction::Verify { dir } => commands::store_verify(&dir),
+        },
     };
 
     if let Err(e) = result {

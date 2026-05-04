@@ -2,7 +2,8 @@ use nexus_core::crypto::{decrypt_data, encrypt_data, generate_dek};
 use nexus_core::crypto::pre::{self, EncryptedDek, PreKeypair, PreSigner, SerializedCfrag, VerifyingKey, PrePublicKey};
 use nexus_core::identity::{Did, IdentityKeypair, IdentityVault};
 use nexus_core::network::{NexusNode, NodeConfig, NodeEvent};
-use nexus_core::storage::shard::{self, ShardManifest, DEFAULT_SHARD_SIZE};
+use nexus_core::storage::shard::{self, ShardManifest, Shard, DEFAULT_SHARD_SIZE};
+use nexus_core::storage::{ShardStore, compute_cid};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
@@ -558,5 +559,95 @@ pub async fn ping_peer(vault_path: &str, addr_str: &str) -> Result<(), String> {
     }
 
     node.shutdown().await.map_err(|e| format!("Shutdown: {}", e))?;
+    Ok(())
+}
+
+// --- Store Commands ---
+
+pub fn store_stats(dir: &str) -> Result<(), String> {
+    let store = ShardStore::open(dir)?;
+    let stats = store.stats()?;
+    println!("📦 Shard Store: {}", dir);
+    println!("   Shards: {}", stats.shard_count);
+    println!("   Total:  {} bytes ({:.2} MB)", stats.total_bytes, stats.total_bytes as f64 / 1_048_576.0);
+    Ok(())
+}
+
+pub fn store_list(dir: &str) -> Result<(), String> {
+    let store = ShardStore::open(dir)?;
+    let cids = store.list()?;
+    if cids.is_empty() {
+        println!("Store is empty.");
+    } else {
+        println!("📦 {} shards in store:", cids.len());
+        for cid in &cids {
+            // Show first 16 chars of CID for readability
+            let short = if cid.len() > 32 { &cid[..32] } else { cid };
+            println!("   {}…", short);
+        }
+    }
+    Ok(())
+}
+
+pub fn store_import(manifest_path: &str, from_dir: &str, store_dir: &str) -> Result<(), String> {
+    let store = ShardStore::open(store_dir)?;
+
+    let manifest_data = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_data)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    let mut imported = 0;
+    let mut skipped = 0;
+
+    for cid_hex in &manifest.shards.shards {
+        if store.has(cid_hex) {
+            skipped += 1;
+            continue;
+        }
+
+        // Look for the shard file in from_dir
+        // Shard files can be named: <cid_hex> or <cid_hex>.shard
+        let shard_path = Path::new(from_dir).join(cid_hex);
+        let shard_path_alt = Path::new(from_dir).join(format!("{}.shard", cid_hex));
+
+        let data = if shard_path.exists() {
+            fs::read(&shard_path).map_err(|e| format!("Read shard: {}", e))?
+        } else if shard_path_alt.exists() {
+            fs::read(&shard_path_alt).map_err(|e| format!("Read shard: {}", e))?
+        } else {
+            return Err(format!("Shard not found: {} (looked in {})", cid_hex, from_dir));
+        };
+
+        let cid = compute_cid(&data);
+        let shard = Shard { cid, data };
+        store.put(&shard)?;
+        imported += 1;
+    }
+
+    println!("✓ Imported {} shards ({} already present)", imported, skipped);
+    Ok(())
+}
+
+pub fn store_verify(dir: &str) -> Result<(), String> {
+    let store = ShardStore::open(dir)?;
+    let cids = store.list()?;
+
+    let mut ok = 0;
+    let mut corrupt = 0;
+
+    for cid_hex in &cids {
+        match store.get(cid_hex) {
+            Ok(Some(_)) => ok += 1,
+            Ok(None) => corrupt += 1,
+            Err(_) => corrupt += 1,
+        }
+    }
+
+    if corrupt == 0 {
+        println!("✓ All {} shards verified OK", ok);
+    } else {
+        println!("⚠ {} OK, {} CORRUPT", ok, corrupt);
+    }
     Ok(())
 }
