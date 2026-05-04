@@ -1,9 +1,0 @@
-[package]
-name = "nexus-tauri"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "Tauri 2.0 shell for NEXUS desktop + mobile"
-
-[dependencies]
-nexus-core = { path = "../nexus-core" }

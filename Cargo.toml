@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "nexus-core",
     "nexus-cli",
-    "nexus-tauri",
+    "nexus-tauri/src-tauri",
 ]
 
 [workspace.package]
