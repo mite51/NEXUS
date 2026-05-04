@@ -90,3 +90,19 @@ export async function removeContact(did: string): Promise<void> {
 export async function updateContact(did: string, name?: string, prePublicKeyHex?: string, notes?: string): Promise<Contact> {
   return invoke('update_contact', { did, name, prePublicKeyHex, notes });
 }
+
+export interface ShareResult {
+  grant_path: string;
+  recipient: string;
+  cfrags_count: number;
+}
+
+export async function shareFile(
+  manifestPath: string,
+  recipientDid: string,
+  recipientPrePkHex: string,
+  vaultPath: string,
+  passphrase: string
+): Promise<ShareResult> {
+  return invoke('share_file', { manifestPath, recipientDid, recipientPrePkHex, vaultPath, passphrase });
+}

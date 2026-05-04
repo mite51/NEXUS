@@ -17,6 +17,7 @@ fn main() {
             commands::list_contacts,
             commands::remove_contact,
             commands::update_contact,
+            commands::share_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

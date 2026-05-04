@@ -4,9 +4,9 @@ use std::path::Path;
 use rand::Rng;
 
 use nexus_core::identity::{IdentityKeypair, IdentityVault, Did};
-use nexus_core::crypto::pre::PreKeypair;
+use nexus_core::crypto::pre::{PreKeypair, PreSigner, PrePublicKey, reencrypt};
 use nexus_core::crypto::{encrypt_data, decrypt_data, generate_dek};
-use nexus_core::manifest::NexusManifest;
+use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
 
@@ -29,6 +29,13 @@ pub struct EncryptResult {
 pub struct StoreStatsResult {
     pub shard_count: usize,
     pub total_bytes: u64,
+}
+
+#[derive(Serialize)]
+pub struct ShareResult {
+    pub grant_path: String,
+    pub recipient: String,
+    pub cfrags_count: usize,
 }
 
 #[derive(Serialize)]
@@ -340,4 +347,68 @@ pub fn update_contact(did: &str, name: Option<&str>, pre_public_key_hex: Option<
     let updated = contact.clone();
     save_contacts(&file)?;
     Ok(updated)
+}
+
+#[tauri::command]
+pub fn share_file(
+    manifest_path: &str,
+    recipient_did: &str,
+    recipient_pre_pk_hex: &str,
+    vault_path: &str,
+    passphrase: &str,
+) -> Result<ShareResult, String> {
+    let (_keypair, pre_kp) = load_keys(vault_path, passphrase)?;
+
+    // Load manifest
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    // Parse recipient's PRE public key
+    let recipient_pk_bytes = hex_decode(recipient_pre_pk_hex)?;
+    let recipient_pk = PrePublicKey { bytes: recipient_pk_bytes };
+
+    // Generate PRE signer + kfrags (threshold=1, shares=1 for direct share)
+    let signer = PreSigner::new();
+    let vk = signer.verifying_key();
+
+    let kfrags = signer
+        .generate_kfrags(&pre_kp, &recipient_pk, 1, 1)
+        .map_err(|e| format!("kfrag generation failed: {}", e))?;
+
+    // Re-encrypt (act as own proxy)
+    let cfrags: Result<Vec<_>, _> = kfrags
+        .iter()
+        .map(|kf| reencrypt(&manifest.encrypted_dek, kf, &pre_kp.public_key(), &recipient_pk, &vk))
+        .collect();
+    let cfrags = cfrags.map_err(|e| format!("Re-encryption failed: {}", e))?;
+
+    // Build share grant
+    let grant = ShareGrant {
+        recipient: recipient_did.to_string(),
+        recipient_pre_pk: recipient_pk,
+        cfrags,
+        verifying_key: vk,
+        manifest_ref: manifest_path.to_string(),
+    };
+
+    // Write grant file
+    let filename = Path::new(manifest_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".into());
+    let short_did = &recipient_did[recipient_did.len().saturating_sub(8)..];
+    let grant_path = format!("{}.share-{}.json", filename, short_did);
+
+    let grant_json = serde_json::to_string_pretty(&grant)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+    fs::write(&grant_path, &grant_json)
+        .map_err(|e| format!("Failed to write grant: {}", e))?;
+
+    Ok(ShareResult {
+        grant_path,
+        recipient: recipient_did.to_string(),
+        cfrags_count: 1,
+    })
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation } from '../ipc';
+  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import FileGrid from '../components/FileGrid.svelte';
   import DetailPanel from '../components/DetailPanel.svelte';
@@ -71,10 +71,25 @@
     pickerMode = 'send';
   }
 
-  function handleContactSelected(e: CustomEvent<Contact>) {
+  async function handleContactSelected(e: CustomEvent<Contact>) {
     const contact = e.detail;
-    if (pickerMode === 'share') {
-      showToast(`Share with ${contact.name} — PRE grant flow coming soon`);
+    if (pickerMode === 'share' && pickerFile) {
+      if (!contact.pre_public_key_hex) {
+        showToast(`Cannot share: ${contact.name} has no PRE public key`);
+      } else {
+        try {
+          const result = await shareFile(
+            pickerFile.manifest_path,
+            contact.did,
+            contact.pre_public_key_hex,
+            vaultPath,
+            $passphrase
+          );
+          showToast(`✓ Shared with ${contact.name} → ${result.grant_path}`);
+        } catch (e: any) {
+          showToast(`Share error: ${e}`);
+        }
+      }
     } else if (pickerMode === 'send') {
       showToast(`Send to ${contact.name} — P2P push flow coming soon`);
     }
