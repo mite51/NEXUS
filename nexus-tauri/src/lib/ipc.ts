@@ -5,6 +5,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 export interface IdentityInfo {
   did: string;
   pre_public_key_hex: string;
+  peer_id: string;
 }
 
 export interface EncryptResult {

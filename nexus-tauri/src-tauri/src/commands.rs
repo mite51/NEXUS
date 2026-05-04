@@ -21,6 +21,7 @@ use crate::node_state::{NodeState, NodeInfo};
 pub struct IdentityInfo {
     pub did: String,
     pub pre_public_key_hex: String,
+    pub peer_id: String,
 }
 
 #[derive(Serialize)]
@@ -150,6 +151,7 @@ pub fn create_identity(vault_path: &str, passphrase: &str) -> Result<IdentityInf
     Ok(IdentityInfo {
         did: did.0,
         pre_public_key_hex: hex_encode(&pre_kp.public_key().bytes),
+        peer_id: keypair.peer_id().to_string(),
     })
 }
 
@@ -160,6 +162,7 @@ pub fn get_identity(vault_path: &str, passphrase: &str) -> Result<IdentityInfo, 
     Ok(IdentityInfo {
         did: did.0,
         pre_public_key_hex: hex_encode(&pre_kp.public_key().bytes),
+        peer_id: keypair.peer_id().to_string(),
     })
 }
 

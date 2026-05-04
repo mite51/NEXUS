@@ -14,6 +14,7 @@
     { id: 'contacts', icon: '👤', label: 'Contacts' },
     { id: 'peers', icon: '🌐', label: 'Peers' },
     { id: 'store', icon: '📦', label: 'Store' },
+    { id: 'settings', icon: '⚙️', label: 'Settings' },
   ];
 </script>
 

@@ -13,6 +13,7 @@
   import SendQueueView from './SendQueueView.svelte';
   import SharedWithMeView from './SharedWithMeView.svelte';
   import PeersView from './PeersView.svelte';
+  import SettingsView from './SettingsView.svelte';
 
   export let vaultPath: string;
 
@@ -141,7 +142,8 @@
       $currentView === 'shared' ? 'Shared With Me' :
       $currentView === 'outbox' ? 'Outbox' :
       $currentView === 'contacts' ? 'Contacts' :
-      $currentView === 'peers' ? 'Peers' : 'Store'
+      $currentView === 'peers' ? 'Peers' :
+      $currentView === 'settings' ? 'Settings' : 'Store'
     }</h2>
     <div class="spacer"></div>
     {#if $currentView === 'files'}
@@ -167,6 +169,8 @@
         <ContactsView />
       {:else if $currentView === 'peers'}
         <PeersView {vaultPath} />
+      {:else if $currentView === 'settings'}
+        <SettingsView />
       {:else}
         <StoreView />
       {/if}
