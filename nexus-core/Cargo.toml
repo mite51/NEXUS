@@ -24,5 +24,23 @@ sha2 = "0.10"
 # Error handling
 thiserror = "2"
 
-[dev-dependencies]
+# Networking
+libp2p = { version = "0.54", features = [
+    "tokio",
+    "quic",
+    "tcp",
+    "noise",
+    "yamux",
+    "kad",
+    "gossipsub",
+    "request-response",
+    "dcutr",
+    "relay",
+    "mdns",
+    "identify",
+    "ed25519",
+    "macros",
+] }
 tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
