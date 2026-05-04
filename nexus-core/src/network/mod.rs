@@ -16,3 +16,4 @@ pub use node::{NexusNode, NodeConfig, NodeEvent, NodeCommand};
 pub use behaviour::NexusBehaviour;
 pub use send_queue::{SendQueue, QueuedSend, SendStatus};
 pub use delivery::{spawn_delivery_worker, DeliveryConfig};
+pub use libp2p::PeerId;
