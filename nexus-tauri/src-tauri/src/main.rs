@@ -38,6 +38,8 @@ fn main() {
             commands::delete_file,
             commands::rename_file,
             commands::get_connectivity_stats,
+            commands::export_file_bundle,
+            commands::import_file_bundle,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

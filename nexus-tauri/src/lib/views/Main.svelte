@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile } from '../ipc';
+  import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile, exportFileBundle } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
@@ -177,6 +177,18 @@
     pickerMode = 'send';
   }
 
+  async function handleExport(e: CustomEvent<FileEntry>) {
+    const file = e.detail;
+    try {
+      const savePath = await pickSaveLocation(file.filename.replace(/\.[^.]+$/, '') + '.nexus-bundle');
+      if (!savePath) return;
+      const result = await exportFileBundle(file.manifest_path, savePath);
+      showToast(`✓ Exported: ${result}`);
+    } catch (e: any) {
+      showToast(`⚠ Export failed: ${e}`);
+    }
+  }
+
   async function handleContactSelected(e: CustomEvent<Contact>) {
     const contact = e.detail;
     if (pickerMode === 'share' && pickerFile) {
@@ -327,6 +339,7 @@
         on:send={handleSend}
         on:delete={handleDelete}
         on:rename={handleRename}
+        on:export={handleExport}
       />
     {/if}
   </div>

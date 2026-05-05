@@ -7,6 +7,8 @@
 
   let listenPort: string = '';
   let bootstrapPeers: string = '';
+  let relayServers: string = '';
+  let telemetryEnabled: boolean = true;
   let exportingKey = false;
   let saving = false;
   let connectivityStats: ConnectivityStats | null = null;
@@ -17,6 +19,8 @@
       const cfg = await getConfig();
       listenPort = cfg.listen_port?.toString() ?? '';
       bootstrapPeers = cfg.bootstrap_peers.join('\n');
+      relayServers = cfg.relay_servers.join('\n');
+      telemetryEnabled = cfg.telemetry_enabled ?? true;
     } catch (_) {}
     await refreshStats();
   });
@@ -37,6 +41,8 @@
       await saveConfig({
         listen_port: listenPort ? parseInt(listenPort) || null : null,
         bootstrap_peers: bootstrapPeers.split('\n').map(s => s.trim()).filter(Boolean),
+        relay_servers: relayServers.split('\n').map(s => s.trim()).filter(Boolean),
+        telemetry_enabled: telemetryEnabled,
       });
       showToast('✓ Settings saved');
     } catch (e: any) {
@@ -132,6 +138,27 @@
     </div>
     <textarea class="bootstrap-input" placeholder="/ip4/1.2.3.4/tcp/4001/p2p/12D3Koo..."
               bind:value={bootstrapPeers}></textarea>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Relay Servers</div>
+        <div class="setting-desc">Multiaddrs of relay nodes for NAT traversal (one per line)</div>
+      </div>
+    </div>
+    <textarea class="bootstrap-input" placeholder="/ip4/1.2.3.4/tcp/4001/p2p/12D3Koo..."
+              bind:value={relayServers}></textarea>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Connectivity Telemetry</div>
+        <div class="setting-desc">Log connection events for diagnostics</div>
+      </div>
+      <label class="toggle-label">
+        <input type="checkbox" bind:checked={telemetryEnabled} />
+        <span class="toggle-text">{telemetryEnabled ? 'On' : 'Off'}</span>
+      </label>
+    </div>
+
     <div class="save-row">
       <button class="save-btn" on:click={handleSave} disabled={saving}>
         {saving ? 'Saving…' : 'Save Network Settings'}
@@ -323,4 +350,11 @@
   .refresh-btn:hover { border-color: var(--accent); }
   .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .muted { color: var(--text-secondary); font-size: 12px; }
+  .toggle-label {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+  }
+  .toggle-label input[type="checkbox"] {
+    width: 16px; height: 16px; accent-color: var(--accent);
+  }
+  .toggle-text { font-size: 12px; color: var(--text-secondary); }
 </style>

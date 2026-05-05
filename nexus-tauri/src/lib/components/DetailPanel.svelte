@@ -56,6 +56,9 @@
       <button class="action-btn" on:click={() => dispatch('rename', file)}>
         ✏️ Rename
       </button>
+      <button class="action-btn" on:click={() => dispatch('export', file)}>
+        📦 Export Bundle
+      </button>
       <button class="action-btn danger" on:click={() => dispatch('delete', file)}>
         🗑 Delete
       </button>

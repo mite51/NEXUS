@@ -198,6 +198,8 @@ export async function getNodeInfo(): Promise<NodeInfo> {
 export interface AppConfig {
   listen_port: number | null;
   bootstrap_peers: string[];
+  relay_servers: string[];
+  telemetry_enabled: boolean;
 }
 
 export interface ConnectivityStats {
@@ -229,4 +231,12 @@ export async function deleteFile(manifestPath: string): Promise<void> {
 
 export async function renameFile(manifestPath: string, newName: string): Promise<void> {
   return invoke('rename_file', { manifestPath, newName });
+}
+
+export async function exportFileBundle(manifestPath: string, outputPath: string): Promise<string> {
+  return invoke('export_file_bundle', { manifestPath, outputPath });
+}
+
+export async function importFileBundle(bundlePath: string): Promise<string> {
+  return invoke('import_file_bundle', { bundlePath });
 }

@@ -693,11 +693,22 @@ const CONFIG_PATH: &str = ".nexus-config.json";
 pub struct AppConfig {
     pub listen_port: Option<u16>,
     pub bootstrap_peers: Vec<String>,
+    #[serde(default)]
+    pub relay_servers: Vec<String>,
+    #[serde(default = "default_telemetry_enabled")]
+    pub telemetry_enabled: bool,
 }
+
+fn default_telemetry_enabled() -> bool { true }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { listen_port: None, bootstrap_peers: vec![] }
+        Self {
+            listen_port: None,
+            bootstrap_peers: vec![],
+            relay_servers: vec![],
+            telemetry_enabled: true,
+        }
     }
 }
 
@@ -767,4 +778,125 @@ pub fn get_connectivity_stats() -> Result<serde_json::Value, String> {
     );
     let stats = collector.stats();
     serde_json::to_value(&stats).map_err(|e| e.to_string())
+}
+
+/// Export an encrypted file as a portable .nexus bundle (tar of manifest + shards)
+#[tauri::command]
+pub fn export_file_bundle(manifest_path: &str, output_path: &str) -> Result<String, String> {
+    use std::io::Write;
+    use nexus_core::storage::ShardStore;
+    use nexus_core::manifest::NexusManifest;
+
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    let store = ShardStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open store: {}", e))?;
+
+    // Create a simple tar-like bundle: JSON header + shard data
+    let mut bundle = Vec::new();
+
+    // Write manifest as first entry
+    let manifest_bytes = manifest_json.as_bytes();
+    let header = serde_json::json!({
+        "version": 1,
+        "manifest_size": manifest_bytes.len(),
+        "shard_count": manifest.shards.shards.len(),
+        "original_name": manifest.shards.filename.as_deref().unwrap_or("unnamed"),
+    });
+    let header_bytes = serde_json::to_vec(&header)
+        .map_err(|e| format!("Header serialize error: {}", e))?;
+
+    // Format: [4-byte header len][header json][manifest json][shard data...]
+    bundle.write_all(&(header_bytes.len() as u32).to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    bundle.write_all(&header_bytes)
+        .map_err(|e| e.to_string())?;
+    bundle.write_all(manifest_bytes)
+        .map_err(|e| e.to_string())?;
+
+    // Write each shard: [4-byte len][shard data]
+    for cid_hex in &manifest.shards.shards {
+        let shard = store.get(cid_hex)
+            .map_err(|e| format!("Failed to read shard {}: {}", cid_hex, e))?
+            .ok_or_else(|| format!("Missing shard: {}", cid_hex))?;
+        bundle.write_all(&(shard.data.len() as u32).to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        bundle.write_all(&shard.data)
+            .map_err(|e| e.to_string())?;
+    }
+
+    fs::write(output_path, &bundle)
+        .map_err(|e| format!("Failed to write bundle: {}", e))?;
+
+    Ok(format!("{} bytes written", bundle.len()))
+}
+
+/// Import a .nexus bundle: extract manifest + shards into local store
+#[tauri::command]
+pub fn import_file_bundle(bundle_path: &str) -> Result<String, String> {
+    use std::io::Read;
+    use nexus_core::storage::ShardStore;
+    use nexus_core::manifest::NexusManifest;
+
+    let data = fs::read(bundle_path)
+        .map_err(|e| format!("Failed to read bundle: {}", e))?;
+
+    let mut cursor = std::io::Cursor::new(&data);
+    let mut buf4 = [0u8; 4];
+
+    // Read header
+    std::io::Read::read_exact(&mut cursor, &mut buf4)
+        .map_err(|e| format!("Invalid bundle (header len): {}", e))?;
+    let header_len = u32::from_le_bytes(buf4) as usize;
+
+    let mut header_bytes = vec![0u8; header_len];
+    cursor.read_exact(&mut header_bytes)
+        .map_err(|e| format!("Invalid bundle (header): {}", e))?;
+
+    let header: serde_json::Value = serde_json::from_slice(&header_bytes)
+        .map_err(|e| format!("Invalid bundle header JSON: {}", e))?;
+
+    let manifest_size = header["manifest_size"].as_u64()
+        .ok_or("Missing manifest_size in header")? as usize;
+    let shard_count = header["shard_count"].as_u64()
+        .ok_or("Missing shard_count in header")? as usize;
+
+    // Read manifest
+    let mut manifest_bytes = vec![0u8; manifest_size];
+    cursor.read_exact(&mut manifest_bytes)
+        .map_err(|e| format!("Invalid bundle (manifest): {}", e))?;
+
+    let manifest_json = String::from_utf8(manifest_bytes.clone())
+        .map_err(|e| format!("Manifest not UTF-8: {}", e))?;
+    let _manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    // Store shards
+    let store = ShardStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open store: {}", e))?;
+
+    for i in 0..shard_count {
+        cursor.read_exact(&mut buf4)
+            .map_err(|e| format!("Invalid bundle (shard {} len): {}", i, e))?;
+        let shard_len = u32::from_le_bytes(buf4) as usize;
+
+        let mut shard_data = vec![0u8; shard_len];
+        cursor.read_exact(&mut shard_data)
+            .map_err(|e| format!("Invalid bundle (shard {} data): {}", i, e))?;
+
+        store.put_data(&shard_data)
+            .map_err(|e| format!("Failed to store shard: {}", e))?;
+    }
+
+    // Save manifest to received files directory
+    let _ = fs::create_dir_all("received");
+    let manifest_filename = format!("received/{}.nexus",
+        _manifest.shards.filename.as_deref().unwrap_or("imported"));
+    fs::write(&manifest_filename, &manifest_json)
+        .map_err(|e| format!("Failed to write manifest: {}", e))?;
+
+    Ok(manifest_filename)
 }
