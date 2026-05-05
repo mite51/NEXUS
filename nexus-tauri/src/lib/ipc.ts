@@ -200,3 +200,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
 export async function deleteFile(manifestPath: string): Promise<void> {
   return invoke('delete_file', { manifestPath });
 }
+
+export async function renameFile(manifestPath: string, newName: string): Promise<void> {
+  return invoke('rename_file', { manifestPath, newName });
+}

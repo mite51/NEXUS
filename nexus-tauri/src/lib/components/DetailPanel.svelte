@@ -53,6 +53,9 @@
       <button class="action-btn" on:click={() => dispatch('send', file)}>
         📤 Send to Peer
       </button>
+      <button class="action-btn" on:click={() => dispatch('rename', file)}>
+        ✏️ Rename
+      </button>
       <button class="action-btn danger" on:click={() => dispatch('delete', file)}>
         🗑 Delete
       </button>

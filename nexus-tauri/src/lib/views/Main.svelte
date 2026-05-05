@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile } from '../ipc';
+  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
@@ -145,6 +145,21 @@
       selectedFile = null;
       const f = await listFiles();
       files.set(f);
+    } catch (e: any) {
+      showToast(`⚠ ${e}`);
+    }
+  }
+
+  async function handleRename(e: CustomEvent<FileEntry>) {
+    const file = e.detail;
+    const newName = prompt('New name:', file.filename);
+    if (!newName || newName === file.filename) return;
+    try {
+      await renameFile(file.manifest_path, newName);
+      showToast(`✓ Renamed to ${newName}`);
+      const f = await listFiles();
+      files.set(f);
+      selectedFile = null;
     } catch (e: any) {
       showToast(`⚠ ${e}`);
     }
@@ -309,6 +324,7 @@
         on:share={handleShare}
         on:send={handleSend}
         on:delete={handleDelete}
+        on:rename={handleRename}
       />
     {/if}
   </div>

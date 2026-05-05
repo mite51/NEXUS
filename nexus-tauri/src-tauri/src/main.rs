@@ -36,6 +36,7 @@ fn main() {
             commands::get_config,
             commands::save_config,
             commands::delete_file,
+            commands::rename_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

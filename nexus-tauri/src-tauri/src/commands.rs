@@ -724,3 +724,20 @@ pub fn delete_file(manifest_path: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn rename_file(manifest_path: &str, new_name: &str) -> Result<(), String> {
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let mut manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    manifest.shards.filename = Some(new_name.to_string());
+
+    let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("Serialize error: {}", e))?;
+    fs::write(manifest_path, json)
+        .map_err(|e| format!("Failed to write manifest: {}", e))?;
+
+    Ok(())
+}
