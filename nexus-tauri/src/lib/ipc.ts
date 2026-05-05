@@ -61,6 +61,15 @@ export async function pickFileToEncrypt(): Promise<string | null> {
   return result ?? null;
 }
 
+export async function pickFilesToEncrypt(): Promise<string[]> {
+  const result = await open({
+    title: 'Choose files to encrypt',
+    multiple: true,
+  });
+  if (!result) return [];
+  return Array.isArray(result) ? result : [result];
+}
+
 export async function pickSaveLocation(defaultName: string): Promise<string | null> {
   const result = await save({
     title: 'Save decrypted file',

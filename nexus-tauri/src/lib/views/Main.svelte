@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile } from '../ipc';
+  import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
@@ -93,9 +93,11 @@
   }
 
   async function handleEncrypt() {
-    const filePath = await pickFileToEncrypt();
-    if (!filePath) return;
-    await handleEncryptPath(filePath);
+    const filePaths = await pickFilesToEncrypt();
+    if (!filePaths.length) return;
+    for (const filePath of filePaths) {
+      await handleEncryptPath(filePath);
+    }
   }
 
   async function handleEncryptPath(filePath: string) {
