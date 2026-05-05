@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend } from '../ipc';
+  import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
@@ -29,7 +29,9 @@
   let dragOver = false;
   let unlistenDrop: (() => void) | null = null;
   let unlistenProgress: (() => void) | null = null;
+  let unlistenDecryptProgress: (() => void) | null = null;
   let encryptProgress = 0;
+  let decryptProgress = 0;
   let searchQuery = '';
   let sortBy: 'name' | 'size' | 'shards' = 'name';
 
@@ -71,11 +73,15 @@
     unlistenProgress = await listen<{ current: number; total: number }>('nexus://encrypt-progress', (event) => {
       encryptProgress = event.payload.current / event.payload.total;
     });
+    unlistenDecryptProgress = await listen<{ current: number; total: number }>('nexus://decrypt-progress', (event) => {
+      decryptProgress = event.payload.current / event.payload.total;
+    });
   });
 
   onDestroy(() => {
     if (unlistenDrop) unlistenDrop();
     if (unlistenProgress) unlistenProgress();
+    if (unlistenDecryptProgress) unlistenDecryptProgress();
   });
 
   function handleCopyDid() {
@@ -117,6 +123,7 @@
     if (!savePath) return;
 
     decrypting = true;
+    decryptProgress = 0;
     try {
       const out = await decryptFile(file.manifest_path, savePath, vaultPath, $passphrase);
       showToast(`✓ Decrypted: ${out}`);
@@ -124,6 +131,23 @@
       showToast(`⚠ ${e}`);
     }
     decrypting = false;
+    decryptProgress = 0;
+  }
+
+  let confirmingDelete: FileEntry | null = null;
+
+  async function handleDelete(e: CustomEvent<FileEntry>) {
+    const file = e.detail;
+    if (!confirm(`Delete "${file.filename}"? This removes the manifest and all shards. This cannot be undone.`)) return;
+    try {
+      await deleteFile(file.manifest_path);
+      showToast(`✓ Deleted ${file.filename}`);
+      selectedFile = null;
+      const f = await listFiles();
+      files.set(f);
+    } catch (e: any) {
+      showToast(`⚠ ${e}`);
+    }
   }
 
   function handleShare(e: CustomEvent<FileEntry>) {
@@ -248,6 +272,11 @@
       <ProgressBar progress={encryptProgress} label="Encrypting" />
     </div>
   {/if}
+  {#if decrypting && decryptProgress > 0}
+    <div class="progress-row">
+      <ProgressBar progress={decryptProgress} label="Decrypting" />
+    </div>
+  {/if}
 
   <div class="content-wrapper">
     <div class="content">
@@ -279,6 +308,7 @@
         on:decrypt={handleDecrypt}
         on:share={handleShare}
         on:send={handleSend}
+        on:delete={handleDelete}
       />
     {/if}
   </div>

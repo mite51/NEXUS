@@ -233,7 +233,9 @@ pub async fn encrypt_file(file_path: &str, vault_path: &str, passphrase: &str, a
 }
 
 #[tauri::command]
-pub fn decrypt_file(manifest_path: &str, output_path: Option<&str>, vault_path: &str, passphrase: &str) -> Result<String, String> {
+pub async fn decrypt_file(manifest_path: &str, output_path: Option<&str>, vault_path: &str, passphrase: &str, app_handle: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+
     let (_keypair, pre_kp) = load_keys(vault_path, passphrase)?;
 
     let manifest_json = fs::read_to_string(manifest_path)
@@ -247,14 +249,19 @@ pub fn decrypt_file(manifest_path: &str, output_path: Option<&str>, vault_path: 
     let manifest_dir = Path::new(manifest_path).parent().unwrap_or(Path::new("."));
     let shards_dir = manifest_dir.join("shards");
 
+    let total_shards = manifest.shards.shards.len();
     let mut shards = Vec::new();
-    for cid_hex in &manifest.shards.shards {
+    for (i, cid_hex) in manifest.shards.shards.iter().enumerate() {
         // Try local store first, then shards directory
         let data = ShardStore::open(".nexus-store").ok()
             .and_then(|s| s.get(cid_hex).ok().flatten().map(|s| s.data))
             .or_else(|| fs::read(shards_dir.join(cid_hex)).ok())
             .ok_or_else(|| format!("Shard not found: {}", cid_hex))?;
         shards.push(Shard { cid: hex_decode(cid_hex)?, data });
+        let _ = app_handle.emit("nexus://decrypt-progress", serde_json::json!({
+            "current": i + 1,
+            "total": total_shards
+        }));
     }
 
     let encrypted_body = reassemble(&manifest.shards, &shards)
@@ -273,7 +280,6 @@ pub fn decrypt_file(manifest_path: &str, output_path: Option<&str>, vault_path: 
 
     Ok(out)
 }
-
 #[tauri::command]
 pub fn get_store_stats() -> Result<StoreStatsResult, String> {
     let store = ShardStore::open(".nexus-store")?;
@@ -695,4 +701,26 @@ pub fn save_config(config: AppConfig) -> Result<(), String> {
         .map_err(|e| format!("Serialize error: {}", e))?;
     fs::write(CONFIG_PATH, json)
         .map_err(|e| format!("Write error: {}", e))
+}
+
+#[tauri::command]
+pub fn delete_file(manifest_path: &str) -> Result<(), String> {
+    // Read manifest to find shard CIDs
+    let manifest_json = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    // Remove shards from local store
+    if let Ok(store) = ShardStore::open(".nexus-store") {
+        for cid_hex in &manifest.shards.shards {
+            let _ = store.remove(cid_hex);
+        }
+    }
+
+    // Remove manifest file
+    fs::remove_file(manifest_path)
+        .map_err(|e| format!("Failed to delete manifest: {}", e))?;
+
+    Ok(())
 }

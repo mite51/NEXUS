@@ -53,6 +53,9 @@
       <button class="action-btn" on:click={() => dispatch('send', file)}>
         📤 Send to Peer
       </button>
+      <button class="action-btn danger" on:click={() => dispatch('delete', file)}>
+        🗑 Delete
+      </button>
     </div>
   </aside>
 {/if}
@@ -125,4 +128,10 @@
     color: white;
   }
   .action-btn.primary:hover { opacity: 0.85; }
+  .action-btn.danger {
+    border-color: var(--error); color: var(--error);
+  }
+  .action-btn.danger:hover {
+    background: var(--error); color: white;
+  }
 </style>

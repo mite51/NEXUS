@@ -196,3 +196,7 @@ export async function getConfig(): Promise<AppConfig> {
 export async function saveConfig(config: AppConfig): Promise<void> {
   return invoke('save_config', { config });
 }
+
+export async function deleteFile(manifestPath: string): Promise<void> {
+  return invoke('delete_file', { manifestPath });
+}
