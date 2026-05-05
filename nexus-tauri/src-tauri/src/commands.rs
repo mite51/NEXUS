@@ -617,6 +617,7 @@ pub async fn start_node(
     passphrase: &str,
     listen_port: Option<u16>,
     state: State<'_, NodeState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let (keypair, _pre_kp) = load_keys(vault_path, passphrase)?;
 
@@ -630,7 +631,7 @@ pub async fn start_node(
         mdns_enabled: true,
     };
 
-    state.start(keypair, config).await
+    state.start(keypair, config, app_handle).await
 }
 
 #[tauri::command]

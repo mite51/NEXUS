@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { identity, toast as toastStore } from './lib/stores/app';
+  import { onMount } from 'svelte';
+  import { identity, toast as toastStore, showToast } from './lib/stores/app';
   import { getIdentity } from './lib/ipc';
+  import { initNotifications, notifyFileReceived } from './lib/notifications';
+  import { listen } from '@tauri-apps/api/event';
   import Setup from './lib/views/Setup.svelte';
   import Unlock from './lib/views/Unlock.svelte';
   import Main from './lib/views/Main.svelte';
@@ -8,6 +11,15 @@
 
   let screen: 'loading' | 'setup' | 'unlock' | 'main' = 'loading';
   const VAULT_PATH = 'vault.json';
+
+  onMount(async () => {
+    await initNotifications();
+    // Listen for file-received events from the node
+    await listen<{ filename: string; from: string }>('nexus://file-received', (event) => {
+      notifyFileReceived(event.payload.filename, event.payload.from);
+      showToast(`\u2713 Received: ${event.payload.filename}`);
+    });
+  });
 
   async function checkVault() {
     try {

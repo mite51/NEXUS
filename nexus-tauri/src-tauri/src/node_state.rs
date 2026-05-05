@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 
 use nexus_core::identity::IdentityKeypair;
 use nexus_core::network::{NexusNode, NodeConfig, NodeCommand, NodeEvent, PeerId};
@@ -44,7 +45,7 @@ impl NodeState {
         }
     }
 
-    pub async fn start(&self, identity: IdentityKeypair, config: NodeConfig) -> Result<String, String> {
+    pub async fn start(&self, identity: IdentityKeypair, config: NodeConfig, app_handle: AppHandle) -> Result<String, String> {
         let mut inner = self.inner.lock().await;
         if inner.node.is_some() {
             return Err("Node already running".into());
@@ -69,7 +70,7 @@ impl NodeState {
             let (_, rx) = mpsc::channel(1);
             rx
         });
-        let event_handle = spawn_event_handler(event_rx, command_tx.clone());
+        let event_handle = spawn_event_handler(event_rx, command_tx.clone(), app_handle);
 
         inner.node = Some(NodeHandle {
             peer_id,
@@ -140,10 +141,18 @@ impl NodeState {
     }
 }
 
+/// Payload for file-received event
+#[derive(Debug, Clone, Serialize)]
+struct FileReceivedPayload {
+    filename: String,
+    from: String,
+}
+
 /// Spawn a task that processes incoming node events
 fn spawn_event_handler(
     mut event_rx: mpsc::Receiver<NodeEvent>,
     command_tx: mpsc::Sender<NodeCommand>,
+    app_handle: AppHandle,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Ensure the received manifests directory exists
@@ -206,6 +215,15 @@ fn spawn_event_handler(
                         channel,
                         response: nexus_core::network::protocol::NexusResponse::ManifestAccepted,
                     }).await;
+
+                    // Emit event to frontend for notification
+                    let _ = app_handle.emit("nexus://file-received", FileReceivedPayload {
+                        filename: serde_json::from_str::<serde_json::Value>(&manifest_json)
+                            .ok()
+                            .and_then(|v| v["shards"]["filename"].as_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "file".into()),
+                        from: peer.to_string(),
+                    });
                 }
                 // Other events we don't handle yet
                 _ => {}
