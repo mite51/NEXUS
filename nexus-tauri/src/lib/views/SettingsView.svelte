@@ -1,5 +1,6 @@
 <script lang="ts">
   import { identity, passphrase, showToast, nodeOnline } from '../stores/app';
+  import { theme, toggleTheme } from '../stores/theme';
 
   let listenPort: string = '';
   let bootstrapPeers: string = '';
@@ -113,6 +114,19 @@
   </div>
 
   <div class="section-card">
+    <div class="section-title">Appearance</div>
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Theme</div>
+        <div class="setting-desc">Switch between dark and light mode</div>
+      </div>
+      <button class="theme-toggle" on:click={toggleTheme}>
+        {$theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+      </button>
+    </div>
+  </div>
+
+  <div class="section-card">
     <div class="section-title">About</div>
     <div class="about-info">
       <p><strong>NEXUS</strong> v0.1.0</p>
@@ -155,6 +169,12 @@
     flex-shrink: 0;
   }
   .copy-btn:hover { border-color: var(--accent); }
+  .theme-toggle {
+    padding: 6px 14px; background: var(--accent); border: none;
+    border-radius: 6px; color: white; font-size: 12px;
+    cursor: pointer; font-weight: 500;
+  }
+  .theme-toggle:hover { opacity: 0.85; }
   .setting-input {
     background: var(--bg); border: 1px solid var(--border);
     border-radius: 4px; color: var(--text); padding: 6px 10px;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { identity, toast as toastStore, showToast } from './lib/stores/app';
+  import { theme } from './lib/stores/theme';
   import { getIdentity } from './lib/ipc';
   import { initNotifications, notifyFileReceived } from './lib/notifications';
   import { listen } from '@tauri-apps/api/event';
@@ -62,7 +63,7 @@
 
 <style>
   :global(*) { margin: 0; padding: 0; box-sizing: border-box; }
-  :global(:root) {
+  :global(:root), :global([data-theme="dark"]) {
     --bg: #0f0f0f;
     --surface: #1a1a1a;
     --border: #2a2a2a;
@@ -72,6 +73,18 @@
     --success: #22c55e;
     --warning: #f59e0b;
     --error: #ef4444;
+    --radius: 8px;
+  }
+  :global([data-theme="light"]) {
+    --bg: #f5f5f5;
+    --surface: #ffffff;
+    --border: #e0e0e0;
+    --text: #1a1a1a;
+    --text-secondary: #666666;
+    --accent: #4f46e5;
+    --success: #16a34a;
+    --warning: #d97706;
+    --error: #dc2626;
     --radius: 8px;
   }
   :global(body) {
