@@ -3,6 +3,7 @@
   import { listReceivedFiles, decryptReceived, removeReceived, pickSaveLocation } from '../ipc';
   import type { ReceivedFileInfo } from '../ipc';
   import { showToast, passphrase } from '../stores/app';
+  import { formatBytes } from '../utils';
 
   export let vaultPath: string;
 
@@ -72,6 +73,9 @@
                 <span class="badge direct">Direct</span>
               {/if}
               · {timeAgo(file.received_at)}
+              {#if file.total_size}
+                · {formatBytes(file.total_size)} ({file.shard_count} shards)
+              {/if}
               {#if file.decrypted}
                 · <span class="decrypted-badge">Decrypted ✓</span>
               {/if}

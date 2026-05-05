@@ -528,10 +528,19 @@ pub struct ReceivedFileInfo {
     pub has_share_grant: bool,
     pub received_at: u64,
     pub decrypted: bool,
+    pub total_size: u64,
+    pub shard_count: usize,
 }
 
 impl From<ReceivedFile> for ReceivedFileInfo {
     fn from(f: ReceivedFile) -> Self {
+        // Try to read manifest for size info
+        let (total_size, shard_count) = fs::read_to_string(&f.manifest_path)
+            .ok()
+            .and_then(|json| serde_json::from_str::<NexusManifest>(&json).ok())
+            .map(|m| (m.shards.total_size, m.shards.shards.len()))
+            .unwrap_or((0, 0));
+
         Self {
             id: f.id,
             sender_did: f.sender_did,
@@ -539,6 +548,8 @@ impl From<ReceivedFile> for ReceivedFileInfo {
             has_share_grant: f.share_grant_json.is_some(),
             received_at: f.received_at,
             decrypted: f.decrypted,
+            total_size,
+            shard_count,
         }
     }
 }

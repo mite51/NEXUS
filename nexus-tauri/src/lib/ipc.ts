@@ -150,6 +150,8 @@ export interface ReceivedFileInfo {
   has_share_grant: boolean;
   received_at: number;
   decrypted: boolean;
+  total_size: number;
+  shard_count: number;
 }
 
 export async function listReceivedFiles(): Promise<ReceivedFileInfo[]> {
