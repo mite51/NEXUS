@@ -183,3 +183,16 @@ export async function stopNode(): Promise<void> {
 export async function getNodeInfo(): Promise<NodeInfo> {
   return invoke('get_node_info');
 }
+
+export interface AppConfig {
+  listen_port: number | null;
+  bootstrap_peers: string[];
+}
+
+export async function getConfig(): Promise<AppConfig> {
+  return invoke('get_config');
+}
+
+export async function saveConfig(config: AppConfig): Promise<void> {
+  return invoke('save_config', { config });
+}

@@ -33,6 +33,8 @@ fn main() {
             commands::start_node,
             commands::stop_node,
             commands::get_node_info,
+            commands::get_config,
+            commands::save_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

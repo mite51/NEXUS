@@ -650,3 +650,35 @@ pub async fn stop_node(state: State<'_, NodeState>) -> Result<(), String> {
 pub async fn get_node_info(state: State<'_, NodeState>) -> Result<NodeInfo, String> {
     Ok(state.info().await)
 }
+
+// --- Config persistence ---
+
+const CONFIG_PATH: &str = ".nexus-config.json";
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AppConfig {
+    pub listen_port: Option<u16>,
+    pub bootstrap_peers: Vec<String>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self { listen_port: None, bootstrap_peers: vec![] }
+    }
+}
+
+#[tauri::command]
+pub fn get_config() -> AppConfig {
+    fs::read_to_string(CONFIG_PATH)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn save_config(config: AppConfig) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Serialize error: {}", e))?;
+    fs::write(CONFIG_PATH, json)
+        .map_err(|e| format!("Write error: {}", e))
+}

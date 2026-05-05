@@ -1,10 +1,35 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { identity, passphrase, showToast, nodeOnline } from '../stores/app';
   import { theme, toggleTheme } from '../stores/theme';
+  import { getConfig, saveConfig } from '../ipc';
 
   let listenPort: string = '';
   let bootstrapPeers: string = '';
   let exportingKey = false;
+  let saving = false;
+
+  onMount(async () => {
+    try {
+      const cfg = await getConfig();
+      listenPort = cfg.listen_port?.toString() ?? '';
+      bootstrapPeers = cfg.bootstrap_peers.join('\n');
+    } catch (_) {}
+  });
+
+  async function handleSave() {
+    saving = true;
+    try {
+      await saveConfig({
+        listen_port: listenPort ? parseInt(listenPort) || null : null,
+        bootstrap_peers: bootstrapPeers.split('\n').map(s => s.trim()).filter(Boolean),
+      });
+      showToast('✓ Settings saved');
+    } catch (e: any) {
+      showToast(`⚠ ${e}`);
+    }
+    saving = false;
+  }
 
   async function handleExportDid() {
     const id = $identity;
@@ -93,6 +118,12 @@
     </div>
     <textarea class="bootstrap-input" placeholder="/ip4/1.2.3.4/tcp/4001/p2p/12D3Koo..."
               bind:value={bootstrapPeers}></textarea>
+    <div class="save-row">
+      <button class="save-btn" on:click={handleSave} disabled={saving}>
+        {saving ? 'Saving…' : 'Save Network Settings'}
+      </button>
+      <span class="save-hint">Takes effect on next node restart</span>
+    </div>
   </div>
 
   <div class="section-card">
@@ -190,6 +221,17 @@
     resize: vertical; outline: none; margin-top: 8px;
   }
   .bootstrap-input:focus { border-color: var(--accent); }
+  .save-row {
+    display: flex; align-items: center; gap: 12px; margin-top: 12px;
+  }
+  .save-btn {
+    padding: 8px 16px; background: var(--accent); border: none;
+    border-radius: 6px; color: white; font-size: 12px;
+    cursor: pointer; font-weight: 500;
+  }
+  .save-btn:hover { opacity: 0.85; }
+  .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .save-hint { font-size: 11px; color: var(--text-secondary); }
   .status-dot {
     display: inline-block; width: 8px; height: 8px;
     border-radius: 50%; background: var(--text-secondary);
