@@ -31,10 +31,17 @@
   let unlistenProgress: (() => void) | null = null;
   let encryptProgress = 0;
   let searchQuery = '';
+  let sortBy: 'name' | 'size' | 'shards' = 'name';
 
-  $: filteredFiles = searchQuery.trim()
-    ? $files.filter(f => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
-    : $files;
+  $: filteredFiles = (() => {
+    let result = searchQuery.trim()
+      ? $files.filter(f => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
+      : [...$files];
+    if (sortBy === 'name') result.sort((a, b) => a.filename.localeCompare(b.filename));
+    else if (sortBy === 'size') result.sort((a, b) => b.total_size - a.total_size);
+    else result.sort((a, b) => b.shard_count - a.shard_count);
+    return result;
+  })();
 
   onMount(async () => {
     try {
@@ -224,6 +231,11 @@
         placeholder="Search files…"
         bind:value={searchQuery}
       />
+      <select class="sort-select" bind:value={sortBy}>
+        <option value="name">Name</option>
+        <option value="size">Size</option>
+        <option value="shards">Shards</option>
+      </select>
       <button class="primary-btn" on:click={handleEncrypt} disabled={encrypting}>
         {encrypting ? 'Encrypting…' : '+ Encrypt File'}
       </button>
@@ -323,6 +335,13 @@
   }
   .search-input:focus { border-color: var(--accent); }
   .search-input::placeholder { color: var(--text-secondary); }
+  .sort-select {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px;
+    color: var(--text); font-size: 12px;
+    outline: none; cursor: pointer;
+  }
+  .sort-select:focus { border-color: var(--accent); }
   .progress-row { padding: 0 16px; }
   .main.drag-over { position: relative; }
   .drop-overlay {
