@@ -9,7 +9,40 @@
     "beforeBuildCommand": "npm run build"
   },
   "bundle": {
-    "icon": ["icons/icon.png"]
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "category": "Utility",
+    "shortDescription": "Encrypted file sharing with p2p networking",
+    "longDescription": "NEXUS: A peer-to-peer encrypted file sharing application using libp2p for NAT traversal, Proxy Re-Encryption for secure sharing, and content-addressed storage for integrity.",
+    "fileAssociations": [
+      {
+        "ext": ["nexus-bundle"],
+        "mimeType": "application/x-nexus-bundle",
+        "description": "NEXUS Encrypted Bundle"
+      }
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["libssl3", "libwebkit2gtk-4.1-0"],
+        "section": "net"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": null,
+      "exceptionDomain": ""
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   },
   "app": {
     "withGlobalTauri": true,

@@ -121,6 +121,8 @@ pub enum NodeEvent {
 pub enum NodeCommand {
     /// Dial a peer at an address
     Dial(Multiaddr),
+    /// Attempt to hole-punch through a relay to reach a peer directly
+    HolePunch { peer: PeerId, relay_addr: Multiaddr },
     /// Connect to a relay and listen through it
     ListenOnRelay(Multiaddr),
     /// Request a shard from a peer
@@ -225,10 +227,9 @@ impl NexusNode {
 
         // Spawn the event loop
         tokio::spawn(async move {
-            // Dial relay servers for reservation
+        // Dial relay servers for reservation (with retry)
             for relay_addr_str in &relay_servers {
                 if let Ok(addr) = relay_addr_str.parse::<Multiaddr>() {
-                    // Listen through the relay (creates a reservation)
                     let relay_listen = addr.clone()
                         .with(libp2p::multiaddr::Protocol::P2pCircuit);
                     match swarm.listen_on(relay_listen.clone()) {
@@ -254,6 +255,10 @@ impl NexusNode {
                 }
             }
 
+            // Periodic relay reconnection timer (every 5 minutes)
+            let mut relay_reconnect = tokio::time::interval(Duration::from_secs(300));
+            relay_reconnect.tick().await; // skip first immediate tick
+
             loop {
                 tokio::select! {
                     // Handle commands from the application
@@ -261,6 +266,14 @@ impl NexusNode {
                         match cmd {
                             NodeCommand::Dial(addr) => {
                                 let _ = swarm.dial(addr);
+                            }
+                            NodeCommand::HolePunch { peer, relay_addr } => {
+                                // Dial peer through relay — DCUtR will automatically
+                                // attempt to upgrade to a direct connection
+                                let circuit_addr = relay_addr
+                                    .with(libp2p::multiaddr::Protocol::P2pCircuit)
+                                    .with(libp2p::multiaddr::Protocol::P2p(peer));
+                                let _ = swarm.dial(circuit_addr);
                             }
                             NodeCommand::ListenOnRelay(addr) => {
                                 let relay_listen = addr.with(libp2p::multiaddr::Protocol::P2pCircuit);
@@ -321,6 +334,16 @@ impl NexusNode {
                     event = swarm.select_next_some() => {
                         handle_swarm_event(&mut swarm, event, &event_tx, &telemetry).await;
                     }
+                    // Periodic relay reconnection
+                    _ = relay_reconnect.tick() => {
+                        for relay_addr_str in &relay_servers {
+                            if let Ok(addr) = relay_addr_str.parse::<Multiaddr>() {
+                                let relay_listen = addr
+                                    .with(libp2p::multiaddr::Protocol::P2pCircuit);
+                                let _ = swarm.listen_on(relay_listen);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -340,6 +363,11 @@ impl NexusNode {
     /// Dial a peer
     pub async fn dial(&self, addr: Multiaddr) -> Result<(), mpsc::error::SendError<NodeCommand>> {
         self.command_tx.send(NodeCommand::Dial(addr)).await
+    }
+
+    /// Attempt a hole-punch to a peer through a relay
+    pub async fn hole_punch(&self, peer: PeerId, relay_addr: Multiaddr) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::HolePunch { peer, relay_addr }).await
     }
 
     /// Request a shard from a specific peer

@@ -61,6 +61,9 @@ async fn test_telemetry_records_connections() {
 
     assert!(discovered.unwrap_or(false), "node2 should discover node1");
 
+    // Give telemetry a moment to flush
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     // Check telemetry recorded the connection
     let collector = TelemetryCollector::new(
         telemetry_path.to_str().unwrap(),

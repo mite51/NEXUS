@@ -189,6 +189,51 @@ impl SendQueue {
     pub fn all(&self) -> Vec<QueuedSend> {
         self.load().sends
     }
+
+    /// Maximum number of delivery attempts before marking as permanently failed
+    pub const MAX_ATTEMPTS: u32 = 5;
+
+    /// Get sends that are ready for retry (pending + backoff elapsed)
+    /// Uses exponential backoff: 30s, 60s, 120s, 240s, 480s
+    pub fn ready_for_retry(&self) -> Vec<QueuedSend> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        self.load()
+            .sends
+            .into_iter()
+            .filter(|s| s.status == SendStatus::Pending)
+            .filter(|s| {
+                match s.last_attempt {
+                    None => true, // Never attempted
+                    Some(last) => {
+                        let backoff_ms = 30_000u64 * (1u64 << s.attempts.min(4));
+                        now.saturating_sub(last) >= backoff_ms
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Auto-fail sends that exceed MAX_ATTEMPTS
+    pub fn expire_stale(&self) -> Result<Vec<String>, String> {
+        let mut queue = self.load();
+        let mut expired = Vec::new();
+        for send in queue.sends.iter_mut() {
+            if send.status == SendStatus::Pending && send.attempts >= Self::MAX_ATTEMPTS {
+                send.status = SendStatus::Failed {
+                    reason: format!("Gave up after {} attempts", send.attempts),
+                };
+                expired.push(send.id.clone());
+            }
+        }
+        if !expired.is_empty() {
+            self.save(&queue)?;
+        }
+        Ok(expired)
+    }
 }
 
 #[cfg(test)]
