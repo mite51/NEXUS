@@ -290,6 +290,61 @@ pub fn get_store_stats() -> Result<StoreStatsResult, String> {
     })
 }
 
+#[derive(Serialize)]
+pub struct ShardInfo {
+    pub cid: String,
+    pub size: u64,
+}
+
+#[tauri::command]
+pub fn list_shards() -> Result<Vec<ShardInfo>, String> {
+    let store = ShardStore::open(".nexus-store")?;
+    let cids = store.list()?;
+    let mut shards = Vec::new();
+    for cid in cids {
+        let size = store.get(&cid)?
+            .map(|s| s.data.len() as u64)
+            .unwrap_or(0);
+        shards.push(ShardInfo { cid, size });
+    }
+    Ok(shards)
+}
+
+#[derive(Serialize)]
+pub struct VerifyResult {
+    pub total: usize,
+    pub valid: usize,
+    pub corrupted: Vec<String>,
+}
+
+#[tauri::command]
+pub fn verify_store() -> Result<VerifyResult, String> {
+    use nexus_core::storage::compute_cid;
+
+    let store = ShardStore::open(".nexus-store")?;
+    let cids = store.list()?;
+    let total = cids.len();
+    let mut valid = 0;
+    let mut corrupted = Vec::new();
+
+    for cid_hex in &cids {
+        match store.get(cid_hex)? {
+            Some(shard) => {
+                let computed_bytes = compute_cid(&shard.data);
+                let computed: String = computed_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                if computed == *cid_hex {
+                    valid += 1;
+                } else {
+                    corrupted.push(cid_hex.clone());
+                }
+            }
+            None => corrupted.push(cid_hex.clone()),
+        }
+    }
+
+    Ok(VerifyResult { total, valid, corrupted })
+}
+
 #[tauri::command]
 pub fn list_files() -> Result<Vec<FileEntry>, String> {
     let mut files = Vec::new();

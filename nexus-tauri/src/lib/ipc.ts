@@ -19,6 +19,17 @@ export interface StoreStatsResult {
   total_bytes: number;
 }
 
+export interface ShardInfo {
+  cid: string;
+  size: number;
+}
+
+export interface VerifyResult {
+  total: number;
+  valid: number;
+  corrupted: string[];
+}
+
 export interface FileEntry {
   filename: string;
   manifest_path: string;
@@ -48,6 +59,14 @@ export async function getStoreStats(): Promise<StoreStatsResult> {
   return invoke('get_store_stats');
 }
 
+export async function listShards(): Promise<ShardInfo[]> {
+  return invoke('list_shards');
+}
+
+export async function verifyStore(): Promise<VerifyResult> {
+  return invoke('verify_store');
+}
+
 export async function listFiles(): Promise<FileEntry[]> {
   return invoke('list_files');
 }
@@ -68,6 +87,15 @@ export async function pickFilesToEncrypt(): Promise<string[]> {
   });
   if (!result) return [];
   return Array.isArray(result) ? result : [result];
+}
+
+export async function pickBundleFile(): Promise<string | null> {
+  const result = await open({
+    title: 'Choose a .nexus-bundle file to import',
+    multiple: false,
+    filters: [{ name: 'NEXUS Bundle', extensions: ['nexus-bundle'] }],
+  });
+  return result ?? null;
 }
 
 export async function pickSaveLocation(defaultName: string): Promise<string | null> {

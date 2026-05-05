@@ -40,6 +40,8 @@ fn main() {
             commands::get_connectivity_stats,
             commands::export_file_bundle,
             commands::import_file_bundle,
+            commands::list_shards,
+            commands::verify_store,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

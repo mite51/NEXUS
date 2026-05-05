@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { fly, fade } from 'svelte/transition';
   import type { FileEntry } from '../ipc';
   import { fileIcon, formatBytes } from '../utils';
 
@@ -8,15 +9,20 @@
 </script>
 
 {#if files.length === 0}
-  <div class="empty">
+  <div class="empty" in:fade={{ duration: 200 }}>
     <span class="icon">📁</span>
     <p>No encrypted files yet</p>
     <p class="hint">Drop a file here or click "Encrypt File" to get started</p>
   </div>
 {:else}
   <div class="grid">
-    {#each files as file}
-      <button class="card" type="button" on:click={() => dispatch('select', file)}>
+    {#each files as file, i (file.manifest_path)}
+      <button
+        class="card"
+        type="button"
+        on:click={() => dispatch('select', file)}
+        in:fly={{ y: 20, duration: 200, delay: Math.min(i * 30, 300) }}
+      >
         <div class="card-icon">{fileIcon(file.filename)}</div>
         <div class="card-name" title={file.filename}>{file.filename}</div>
         <div class="card-meta">

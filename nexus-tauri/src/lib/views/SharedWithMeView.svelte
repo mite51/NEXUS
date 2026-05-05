@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { listReceivedFiles, decryptReceived, removeReceived, pickSaveLocation } from '../ipc';
   import type { ReceivedFileInfo } from '../ipc';
   import { showToast, passphrase } from '../stores/app';
@@ -51,14 +52,14 @@
 
 <div class="shared-view">
   {#if files.length === 0}
-    <div class="empty">
+    <div class="empty" in:fade={{ duration: 200 }}>
       <span class="icon">📨</span>
       <p>No shared files yet</p>
       <p class="hint">When peers send or share files with you, they'll appear here</p>
     </div>
   {:else}
     <div class="file-list">
-      {#each files as file}
+      {#each files as file, i (file.manifest_path)}
         <div class="file-card" class:decrypted={file.decrypted}>
           <div class="file-icon">
             {#if file.has_share_grant}🔑{:else}📄{/if}

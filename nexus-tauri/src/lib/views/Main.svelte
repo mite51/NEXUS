@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
-  import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile, exportFileBundle } from '../ipc';
+  import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile, exportFileBundle, importFileBundle, pickBundleFile } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
@@ -189,6 +189,19 @@
     }
   }
 
+  async function handleImportBundle() {
+    try {
+      const bundlePath = await pickBundleFile();
+      if (!bundlePath) return;
+      const manifestPath = await importFileBundle(bundlePath);
+      showToast(`✓ Imported: ${manifestPath}`);
+      const f = await listFiles();
+      files.set(f);
+    } catch (e: any) {
+      showToast(`⚠ Import failed: ${e}`);
+    }
+  }
+
   async function handleContactSelected(e: CustomEvent<Contact>) {
     const contact = e.detail;
     if (pickerMode === 'share' && pickerFile) {
@@ -293,6 +306,9 @@
       <button class="primary-btn" on:click={handleEncrypt} disabled={encrypting}>
         {encrypting ? 'Encrypting…' : '+ Encrypt File'}
       </button>
+      <button class="secondary-btn" on:click={handleImportBundle}>
+        📥 Import Bundle
+      </button>
     {/if}
   </div>
 
@@ -371,18 +387,16 @@
     font-size: 13px; cursor: pointer;
   }
   .primary-btn:hover { opacity: 0.85; }
+  .secondary-btn {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); padding: 8px 16px; border-radius: 6px;
+    font-size: 13px; cursor: pointer;
+  }
+  .secondary-btn:hover { border-color: var(--accent); }
   .content-wrapper {
     flex: 1; display: flex; overflow: hidden;
   }
   .content { flex: 1; padding: 24px; overflow-y: auto; }
-  .empty {
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    height: 100%; gap: 8px; color: var(--text-secondary);
-  }
-  .empty .icon { font-size: 48px; }
-  .empty p { font-size: 14px; }
-  .empty .hint { font-size: 12px; }
   .loading-center {
     display: flex; align-items: center; justify-content: center;
     height: 100%;
