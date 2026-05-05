@@ -158,7 +158,26 @@
     pickerMode = null;
     pickerFile = null;
   }
+
+  function handleKeydown(e: KeyboardEvent) {
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && e.key === 'e') {
+      e.preventDefault();
+      if ($currentView === 'files' && !encrypting) handleEncrypt();
+    } else if (ctrl && e.key === 'f') {
+      e.preventDefault();
+      if ($currentView !== 'files') currentView.set('files');
+      const input = document.querySelector('.search-input') as HTMLInputElement;
+      input?.focus();
+    } else if (e.key === 'Escape') {
+      if (pickerMode) { handlePickerCancel(); }
+      else if (selectedFile) { selectedFile = null; }
+      else { searchQuery = ''; }
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <Sidebar
   did={$didShort}

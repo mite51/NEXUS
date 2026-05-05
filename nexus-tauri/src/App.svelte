@@ -9,6 +9,7 @@
   import Unlock from './lib/views/Unlock.svelte';
   import Main from './lib/views/Main.svelte';
   import Toast from './lib/components/Toast.svelte';
+  import ErrorBoundary from './lib/components/ErrorBoundary.svelte';
 
   let screen: 'loading' | 'setup' | 'unlock' | 'main' = 'loading';
   const VAULT_PATH = 'vault.json';
@@ -60,6 +61,7 @@
 {#if $toastStore}
   <Toast message={$toastStore} />
 {/if}
+<ErrorBoundary />
 
 <style>
   :global(*) { margin: 0; padding: 0; box-sizing: border-box; }
