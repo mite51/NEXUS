@@ -4,12 +4,14 @@
   import { listFiles, pickFileToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { listen } from '@tauri-apps/api/event';
   import FileGrid from '../components/FileGrid.svelte';
   import DetailPanel from '../components/DetailPanel.svelte';
   import ContactPicker from '../components/ContactPicker.svelte';
   import Sidebar from '../components/Sidebar.svelte';
   import StoreView from './StoreView.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import ProgressBar from '../components/ProgressBar.svelte';
   import ContactsView from './ContactsView.svelte';
   import SendQueueView from './SendQueueView.svelte';
   import SharedWithMeView from './SharedWithMeView.svelte';
@@ -26,6 +28,8 @@
   let loadingFiles = true;
   let dragOver = false;
   let unlistenDrop: (() => void) | null = null;
+  let unlistenProgress: (() => void) | null = null;
+  let encryptProgress = 0;
   let searchQuery = '';
 
   $: filteredFiles = searchQuery.trim()
@@ -56,10 +60,15 @@
         dragOver = false;
       }
     });
+    // Listen for encrypt progress
+    unlistenProgress = await listen<{ current: number; total: number }>('nexus://encrypt-progress', (event) => {
+      encryptProgress = event.payload.current / event.payload.total;
+    });
   });
 
   onDestroy(() => {
     if (unlistenDrop) unlistenDrop();
+    if (unlistenProgress) unlistenProgress();
   });
 
   function handleCopyDid() {
@@ -78,6 +87,7 @@
 
   async function handleEncryptPath(filePath: string) {
     encrypting = true;
+    encryptProgress = 0;
     try {
       const result = await encryptFile(filePath, vaultPath, $passphrase);
       showToast(`✓ Encrypted: ${result.filename} (${result.shard_count} shards)`);
@@ -87,6 +97,7 @@
       showToast(`⚠ ${e}`);
     }
     encrypting = false;
+    encryptProgress = 0;
   }
 
   function handleFileSelect(e: CustomEvent<FileEntry>) {
@@ -219,6 +230,12 @@
     {/if}
   </div>
 
+  {#if encrypting && encryptProgress > 0}
+    <div class="progress-row">
+      <ProgressBar progress={encryptProgress} label="Encrypting" />
+    </div>
+  {/if}
+
   <div class="content-wrapper">
     <div class="content">
       {#if $currentView === 'files'}
@@ -306,6 +323,7 @@
   }
   .search-input:focus { border-color: var(--accent); }
   .search-input::placeholder { color: var(--text-secondary); }
+  .progress-row { padding: 0 16px; }
   .main.drag-over { position: relative; }
   .drop-overlay {
     position: absolute; inset: 0; z-index: 100;

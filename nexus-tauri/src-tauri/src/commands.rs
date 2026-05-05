@@ -167,7 +167,9 @@ pub fn get_identity(vault_path: &str, passphrase: &str) -> Result<IdentityInfo, 
 }
 
 #[tauri::command]
-pub fn encrypt_file(file_path: &str, vault_path: &str, passphrase: &str) -> Result<EncryptResult, String> {
+pub async fn encrypt_file(file_path: &str, vault_path: &str, passphrase: &str, app_handle: tauri::AppHandle) -> Result<EncryptResult, String> {
+    use tauri::Emitter;
+
     let (_keypair, pre_kp) = load_keys(vault_path, passphrase)?;
     let (keypair, _) = load_keys(vault_path, passphrase)?;
     let did = Did::from_public_identity(&keypair.public_identity());
@@ -197,8 +199,13 @@ pub fn encrypt_file(file_path: &str, vault_path: &str, passphrase: &str) -> Resu
 
     // Store in local shard store
     if let Ok(store) = ShardStore::open(".nexus-store") {
-        for s in &shards {
+        let total = shards.len();
+        for (i, s) in shards.iter().enumerate() {
             let _ = store.put(s);
+            let _ = app_handle.emit("nexus://encrypt-progress", serde_json::json!({
+                "current": i + 1,
+                "total": total
+            }));
         }
     }
 
