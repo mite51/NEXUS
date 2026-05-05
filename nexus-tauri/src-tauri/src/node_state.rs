@@ -135,6 +135,7 @@ impl NodeState {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn command_tx(&self) -> Option<mpsc::Sender<NodeCommand>> {
         let inner = self.inner.lock().await;
         inner.node.as_ref().map(|n| n.command_tx.clone())
@@ -160,7 +161,7 @@ fn spawn_event_handler(
 
         while let Some(event) = event_rx.recv().await {
             match event {
-                NodeEvent::ShardPushed { peer, cid, data, channel } => {
+                NodeEvent::ShardPushed { peer: _, cid, data, channel } => {
                     // Store the shard locally
                     let store = nexus_core::storage::ShardStore::open(".nexus-store").ok();
                     if let Some(store) = store {

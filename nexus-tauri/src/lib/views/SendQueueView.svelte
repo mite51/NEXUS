@@ -36,6 +36,14 @@
     } catch (e: any) { showToast(`Error: ${e}`); }
   }
 
+  async function handleClearDelivered() {
+    for (const send of delivered) {
+      try { await cancelSend(send.id); } catch (_) {}
+    }
+    showToast('✓ Cleared delivered items');
+    await refresh();
+  }
+
   function statusIcon(status: string): string {
     if (status === 'pending') return '⏳';
     if (status === 'in_progress') return '📡';
@@ -114,7 +122,10 @@
 
     {#if delivered.length > 0}
       <div class="section">
-        <div class="section-label">Delivered ({delivered.length})</div>
+        <div class="section-header">
+          <div class="section-label">Delivered ({delivered.length})</div>
+          <button class="clear-btn" on:click={handleClearDelivered}>Clear all</button>
+        </div>
         {#each delivered as send}
           <div class="send-card delivered">
             <span class="status-icon">{statusIcon(send.status)}</span>
@@ -142,10 +153,17 @@
   .empty p { font-size: 14px; }
   .empty .hint { font-size: 12px; }
   .section { display: flex; flex-direction: column; gap: 8px; }
+  .section-header { display: flex; align-items: center; justify-content: space-between; }
   .section-label {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-secondary); font-weight: 600;
   }
+  .clear-btn {
+    font-size: 11px; background: none; border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 8px; color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .clear-btn:hover { border-color: var(--accent); color: var(--accent); }
   .send-card {
     display: flex; align-items: center; gap: 12px;
     padding: 12px 14px;

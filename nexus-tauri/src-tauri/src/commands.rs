@@ -11,7 +11,7 @@ use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
 use nexus_core::storage::{ReceivedFiles, ReceivedFile};
-use nexus_core::network::{SendQueue, QueuedSend, SendStatus, NodeConfig, Multiaddr, PeerId};
+use nexus_core::network::{SendQueue, QueuedSend, SendStatus, NodeConfig};
 
 use crate::node_state::{NodeState, NodeInfo};
 
