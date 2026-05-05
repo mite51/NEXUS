@@ -200,6 +200,21 @@ export interface AppConfig {
   bootstrap_peers: string[];
 }
 
+export interface ConnectivityStats {
+  hole_punch_attempts: number;
+  hole_punch_successes: number;
+  relay_attempts: number;
+  relay_successes: number;
+  dial_failures: number;
+  connections_total: number;
+  connections_relayed: number;
+  last_nat_status: string;
+}
+
+export async function getConnectivityStats(): Promise<ConnectivityStats> {
+  return invoke('get_connectivity_stats');
+}
+
 export async function getConfig(): Promise<AppConfig> {
   return invoke('get_config');
 }

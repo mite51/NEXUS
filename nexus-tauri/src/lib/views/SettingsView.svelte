@@ -2,12 +2,15 @@
   import { onMount } from 'svelte';
   import { identity, passphrase, showToast, nodeOnline } from '../stores/app';
   import { theme, toggleTheme } from '../stores/theme';
-  import { getConfig, saveConfig } from '../ipc';
+  import { getConfig, saveConfig, getConnectivityStats } from '../ipc';
+  import type { ConnectivityStats } from '../ipc';
 
   let listenPort: string = '';
   let bootstrapPeers: string = '';
   let exportingKey = false;
   let saving = false;
+  let connectivityStats: ConnectivityStats | null = null;
+  let loadingStats = false;
 
   onMount(async () => {
     try {
@@ -15,7 +18,18 @@
       listenPort = cfg.listen_port?.toString() ?? '';
       bootstrapPeers = cfg.bootstrap_peers.join('\n');
     } catch (_) {}
+    await refreshStats();
   });
+
+  async function refreshStats() {
+    loadingStats = true;
+    try {
+      connectivityStats = await getConnectivityStats();
+    } catch (_) {
+      connectivityStats = null;
+    }
+    loadingStats = false;
+  }
 
   async function handleSave() {
     saving = true;
@@ -124,6 +138,50 @@
       </button>
       <span class="save-hint">Takes effect on next node restart</span>
     </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">Network Health</div>
+
+    {#if connectivityStats}
+      <div class="health-grid">
+        <div class="health-stat">
+          <span class="health-value">{connectivityStats.last_nat_status}</span>
+          <span class="health-label">NAT Status</span>
+        </div>
+        <div class="health-stat">
+          <span class="health-value">{connectivityStats.connections_total}</span>
+          <span class="health-label">Connections</span>
+        </div>
+        <div class="health-stat">
+          <span class="health-value">{connectivityStats.connections_relayed}</span>
+          <span class="health-label">Relayed</span>
+        </div>
+        <div class="health-stat">
+          <span class="health-value">
+            {connectivityStats.hole_punch_successes}/{connectivityStats.hole_punch_attempts}
+          </span>
+          <span class="health-label">Hole Punches</span>
+        </div>
+        <div class="health-stat">
+          <span class="health-value">
+            {connectivityStats.relay_successes}/{connectivityStats.relay_attempts}
+          </span>
+          <span class="health-label">Relay Reservations</span>
+        </div>
+        <div class="health-stat">
+          <span class="health-value">{connectivityStats.dial_failures}</span>
+          <span class="health-label">Dial Failures</span>
+        </div>
+      </div>
+      <button class="refresh-btn" on:click={refreshStats} disabled={loadingStats}>
+        {loadingStats ? 'Refreshing…' : '↻ Refresh'}
+      </button>
+    {:else if loadingStats}
+      <p class="muted">Loading stats…</p>
+    {:else}
+      <p class="muted">No telemetry data available yet.</p>
+    {/if}
   </div>
 
   <div class="section-card">
@@ -241,4 +299,28 @@
   .about-info p { font-size: 13px; line-height: 1.6; }
   .about-info .muted { color: var(--text-secondary); }
   .about-info .small { font-size: 11px; }
+  .health-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin-bottom: 12px;
+  }
+  .health-stat {
+    display: flex; flex-direction: column; align-items: center;
+    background: var(--bg); border-radius: 8px; padding: 12px 8px;
+  }
+  .health-value {
+    font-size: 18px; font-weight: 600; color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .health-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px;
+    color: var(--text-secondary); margin-top: 4px;
+  }
+  .refresh-btn {
+    padding: 6px 14px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 11px;
+    cursor: pointer;
+  }
+  .refresh-btn:hover { border-color: var(--accent); }
+  .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .muted { color: var(--text-secondary); font-size: 12px; }
 </style>

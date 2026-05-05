@@ -758,7 +758,7 @@ pub fn rename_file(manifest_path: &str, new_name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_connectivity_stats() -> Result<serde_json::Value, String> {
-    use nexus_core::network::{TelemetryCollector, TelemetryStats};
+    use nexus_core::network::TelemetryCollector;
 
     let collector = TelemetryCollector::new(
         ".nexus-telemetry",
