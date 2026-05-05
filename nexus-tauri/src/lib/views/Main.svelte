@@ -26,6 +26,11 @@
   let loadingFiles = true;
   let dragOver = false;
   let unlistenDrop: (() => void) | null = null;
+  let searchQuery = '';
+
+  $: filteredFiles = searchQuery.trim()
+    ? $files.filter(f => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
+    : $files;
 
   onMount(async () => {
     try {
@@ -183,6 +188,12 @@
     }</h2>
     <div class="spacer"></div>
     {#if $currentView === 'files'}
+      <input
+        class="search-input"
+        type="text"
+        placeholder="Search files…"
+        bind:value={searchQuery}
+      />
       <button class="primary-btn" on:click={handleEncrypt} disabled={encrypting}>
         {encrypting ? 'Encrypting…' : '+ Encrypt File'}
       </button>
@@ -195,7 +206,7 @@
         {#if loadingFiles}
           <div class="loading-center"><Spinner size={32} /></div>
         {:else}
-          <FileGrid files={$files} on:select={handleFileSelect} />
+          <FileGrid files={filteredFiles} on:select={handleFileSelect} />
         {/if}
       {:else if $currentView === 'shared'}
         <SharedWithMeView {vaultPath} />
@@ -267,6 +278,15 @@
     height: 100%;
   }
   .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .search-input {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px;
+    color: var(--text); font-size: 13px;
+    outline: none; width: 200px;
+    transition: border-color 0.15s;
+  }
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--text-secondary); }
   .main.drag-over { position: relative; }
   .drop-overlay {
     position: absolute; inset: 0; z-index: 100;
