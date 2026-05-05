@@ -11,7 +11,7 @@ use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
 use nexus_core::storage::{ReceivedFiles, ReceivedFile};
-use nexus_core::network::{SendQueue, QueuedSend, SendStatus, NodeConfig};
+use nexus_core::network::{SendQueue, QueuedSend, SendStatus, NodeConfig, Multiaddr, PeerId};
 
 use crate::node_state::{NodeState, NodeInfo};
 
@@ -628,13 +628,27 @@ pub async fn start_node(
 ) -> Result<String, String> {
     let (keypair, _pre_kp) = load_keys(vault_path, passphrase)?;
 
-    let port = listen_port.unwrap_or(0);
+    // Load saved config, prefer explicit listen_port param if provided
+    let saved = get_config();
+    let port = listen_port.or(saved.listen_port).unwrap_or(0);
+    let bootstrap_peers: Vec<(nexus_core::network::PeerId, nexus_core::network::Multiaddr)> = saved.bootstrap_peers.iter()
+        .filter_map(|addr_str| {
+            let ma: nexus_core::network::Multiaddr = addr_str.parse().ok()?;
+            // Extract peer id from the /p2p/<id> component
+            let addr_string = addr_str.to_string();
+            let p2p_idx = addr_string.rfind("/p2p/")?;
+            let peer_id_str = &addr_string[p2p_idx + 5..];
+            let peer_id: nexus_core::network::PeerId = peer_id_str.parse().ok()?;
+            Some((peer_id, ma))
+        })
+        .collect();
+
     let config = NodeConfig {
         listen_addrs: vec![
             format!("/ip4/0.0.0.0/tcp/{}", port),
             format!("/ip4/0.0.0.0/udp/{}/quic-v1", port),
         ],
-        bootstrap_peers: vec![],
+        bootstrap_peers,
         mdns_enabled: true,
     };
 
