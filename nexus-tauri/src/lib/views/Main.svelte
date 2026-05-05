@@ -201,6 +201,7 @@
   did={$didShort}
   view={$currentView}
   online={$nodeOnline}
+  fileCount={$files.length}
   on:navigate={(e) => { currentView.set(e.detail); selectedFile = null; }}
   on:copyDid={handleCopyDid}
 />

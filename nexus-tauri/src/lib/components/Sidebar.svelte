@@ -4,6 +4,9 @@
   export let did: string;
   export let view: string;
   export let online: boolean;
+  export let fileCount: number = 0;
+  export let sharedCount: number = 0;
+  export let outboxCount: number = 0;
 
   const dispatch = createEventDispatcher();
 
@@ -16,6 +19,13 @@
     { id: 'store', icon: '📦', label: 'Store' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
   ];
+
+  function badgeFor(id: string): number {
+    if (id === 'files') return fileCount;
+    if (id === 'shared') return sharedCount;
+    if (id === 'outbox') return outboxCount;
+    return 0;
+  }
 </script>
 
 <aside class="sidebar">
@@ -29,7 +39,10 @@
         on:click={() => dispatch('navigate', item.id)}
       >
         <span class="nav-icon">{item.icon}</span>
-        <span>{item.label}</span>
+        <span class="nav-label">{item.label}</span>
+        {#if badgeFor(item.id) > 0}
+          <span class="badge">{badgeFor(item.id)}</span>
+        {/if}
       </button>
     {/each}
   </nav>
@@ -72,6 +85,13 @@
     border-left-color: var(--accent);
   }
   .nav-icon { font-size: 16px; }
+  .nav-label { flex: 1; }
+  .badge {
+    background: var(--accent); color: white;
+    font-size: 10px; font-weight: 600;
+    padding: 1px 6px; border-radius: 10px;
+    min-width: 18px; text-align: center;
+  }
   .footer {
     padding: 12px 16px;
     border-top: 1px solid var(--border);
