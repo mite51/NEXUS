@@ -19,7 +19,7 @@
 
 <svelte:window on:keydown={handleKey} />
 
-<div class="overlay" on:click|self={cancel}>
+<div class="overlay" role="presentation" on:click|self={cancel}>
   <div class="dialog">
     <h3>{title}</h3>
     <p>{message}</p>

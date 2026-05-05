@@ -16,14 +16,14 @@
 {:else}
   <div class="grid">
     {#each files as file}
-      <div class="card" on:click={() => dispatch('select', file)}>
+      <button class="card" type="button" on:click={() => dispatch('select', file)}>
         <div class="card-icon">{fileIcon(file.filename)}</div>
         <div class="card-name" title={file.filename}>{file.filename}</div>
         <div class="card-meta">
           {file.shard_count} shard{file.shard_count !== 1 ? 's' : ''}
           {#if file.total_size}• {formatBytes(file.total_size)}{/if}
         </div>
-      </div>
+      </button>
     {/each}
   </div>
 {/if}
@@ -41,6 +41,10 @@
     padding: 16px;
     cursor: pointer;
     transition: all 0.15s;
+    text-align: left;
+    font: inherit;
+    color: var(--text);
+    width: 100%;
   }
   .card:hover {
     border-color: var(--accent);

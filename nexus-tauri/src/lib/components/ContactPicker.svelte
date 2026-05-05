@@ -49,7 +49,7 @@
   }
 </script>
 
-<div class="overlay" on:click|self={cancel}>
+<div class="overlay" role="presentation" on:click|self={cancel} on:keydown={(e) => e.key === 'Escape' && cancel()}>
   <div class="modal">
     <div class="modal-header">
       <h3>{title}</h3>
