@@ -7,7 +7,7 @@ use libp2p::{
     identity::Keypair, Multiaddr, PeerId, Swarm, SwarmBuilder,
     noise, tcp, yamux,
     swarm::SwarmEvent,
-    gossipsub,
+    gossipsub, autonat, dcutr,
     request_response,
     mdns,
 };
@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 
 use super::behaviour::{NexusBehaviour, NexusBehaviourEvent};
 use super::protocol::{NexusRequest, NexusResponse};
+use super::telemetry::{TelemetryCollector, ConnectivityEvent, NatStatus};
 
 /// Configuration for starting a NEXUS node
 #[derive(Debug, Clone)]
@@ -27,6 +28,12 @@ pub struct NodeConfig {
     pub bootstrap_peers: Vec<(PeerId, Multiaddr)>,
     /// Whether to enable mDNS for local discovery
     pub mdns_enabled: bool,
+    /// Relay servers to attempt reservation with
+    pub relay_servers: Vec<String>,
+    /// Whether to enable telemetry collection
+    pub telemetry_enabled: bool,
+    /// Directory for telemetry log files
+    pub telemetry_dir: Option<String>,
 }
 
 impl Default for NodeConfig {
@@ -38,6 +45,9 @@ impl Default for NodeConfig {
             ],
             bootstrap_peers: vec![],
             mdns_enabled: true,
+            relay_servers: vec![],
+            telemetry_enabled: true,
+            telemetry_dir: None,
         }
     }
 }
@@ -90,6 +100,20 @@ pub enum NodeEvent {
         data: Vec<u8>,
         source: Option<PeerId>,
     },
+    /// NAT status changed
+    NatStatusChanged {
+        status: NatStatus,
+    },
+    /// Relay reservation established
+    RelayReserved {
+        relay_peer: PeerId,
+        relay_addr: Multiaddr,
+    },
+    /// Hole punch completed (success or failure)
+    HolePunchResult {
+        remote_peer: PeerId,
+        success: bool,
+    },
 }
 
 /// Commands that can be sent to the node
@@ -97,6 +121,8 @@ pub enum NodeEvent {
 pub enum NodeCommand {
     /// Dial a peer at an address
     Dial(Multiaddr),
+    /// Connect to a relay and listen through it
+    ListenOnRelay(Multiaddr),
     /// Request a shard from a peer
     RequestShard { peer: PeerId, cid: String },
     /// Push a shard to a peer
@@ -186,8 +212,48 @@ impl NexusNode {
         let (command_tx, mut command_rx) = mpsc::channel::<NodeCommand>(256);
         let (event_tx, event_rx) = mpsc::channel::<NodeEvent>(256);
 
+        // Set up telemetry
+        let telemetry_dir = config.telemetry_dir.unwrap_or_else(|| ".nexus-telemetry".to_string());
+        let telemetry = TelemetryCollector::new(
+            &telemetry_dir,
+            local_peer_id.to_string(),
+            config.telemetry_enabled,
+        );
+
+        // Collect relay servers to dial after startup
+        let relay_servers = config.relay_servers.clone();
+
         // Spawn the event loop
         tokio::spawn(async move {
+            // Dial relay servers for reservation
+            for relay_addr_str in &relay_servers {
+                if let Ok(addr) = relay_addr_str.parse::<Multiaddr>() {
+                    // Listen through the relay (creates a reservation)
+                    let relay_listen = addr.clone()
+                        .with(libp2p::multiaddr::Protocol::P2pCircuit);
+                    match swarm.listen_on(relay_listen.clone()) {
+                        Ok(_) => {
+                            telemetry.record(ConnectivityEvent::RelayReservation {
+                                relay_peer: "unknown".to_string(),
+                                relay_addr: relay_addr_str.clone(),
+                                success: true,
+                                error: None,
+                                duration_ms: 0,
+                            });
+                        }
+                        Err(e) => {
+                            telemetry.record(ConnectivityEvent::RelayReservation {
+                                relay_peer: "unknown".to_string(),
+                                relay_addr: relay_addr_str.clone(),
+                                success: false,
+                                error: Some(e.to_string()),
+                                duration_ms: 0,
+                            });
+                        }
+                    }
+                }
+            }
+
             loop {
                 tokio::select! {
                     // Handle commands from the application
@@ -195,6 +261,10 @@ impl NexusNode {
                         match cmd {
                             NodeCommand::Dial(addr) => {
                                 let _ = swarm.dial(addr);
+                            }
+                            NodeCommand::ListenOnRelay(addr) => {
+                                let relay_listen = addr.with(libp2p::multiaddr::Protocol::P2pCircuit);
+                                let _ = swarm.listen_on(relay_listen);
                             }
                             NodeCommand::RequestShard { peer, cid } => {
                                 swarm.behaviour_mut().request_response.send_request(
@@ -249,7 +319,7 @@ impl NexusNode {
                     }
                     // Handle swarm events
                     event = swarm.select_next_some() => {
-                        handle_swarm_event(&mut swarm, event, &event_tx).await;
+                        handle_swarm_event(&mut swarm, event, &event_tx, &telemetry).await;
                     }
                 }
             }
@@ -336,6 +406,7 @@ async fn handle_swarm_event(
     _swarm: &mut Swarm<NexusBehaviour>,
     event: SwarmEvent<NexusBehaviourEvent>,
     event_tx: &mpsc::Sender<NodeEvent>,
+    telemetry: &TelemetryCollector,
 ) {
     match event {
         SwarmEvent::NewListenAddr { address, .. } => {
@@ -408,8 +479,70 @@ async fn handle_swarm_event(
                 source: message.source,
             }).await;
         }
-        SwarmEvent::ConnectionClosed { peer_id, .. } => {
-            let _ = event_tx.send(NodeEvent::PeerDisconnected(peer_id)).await;
+        // AutoNAT status changes
+        SwarmEvent::Behaviour(NexusBehaviourEvent::Autonat(autonat::Event::StatusChanged { old: _, new })) => {
+            let status = match new {
+                autonat::NatStatus::Public(_) => NatStatus::Public,
+                autonat::NatStatus::Private => NatStatus::Private,
+                autonat::NatStatus::Unknown => NatStatus::Unknown,
+            };
+            telemetry.record(ConnectivityEvent::NatStatusChanged {
+                status: status.clone(),
+                confidence: 0,
+            });
+            let _ = event_tx.send(NodeEvent::NatStatusChanged { status }).await;
+        }
+        // DCUtR hole-punch events
+        SwarmEvent::Behaviour(NexusBehaviourEvent::Dcutr(dcutr::Event { remote_peer_id, result })) => {
+            let success = result.is_ok();
+            let error = result.err().map(|e| format!("{:?}", e));
+            telemetry.record(ConnectivityEvent::HolePunch {
+                remote_peer: remote_peer_id.to_string(),
+                success,
+                direct_addr: None,
+                error,
+                duration_ms: 0,
+            });
+            let _ = event_tx.send(NodeEvent::HolePunchResult {
+                remote_peer: remote_peer_id,
+                success,
+            }).await;
+        }
+        // Connection established (track relay vs direct)
+        SwarmEvent::ConnectionEstablished { peer_id, endpoint, num_established, .. } => {
+            let addr = endpoint.get_remote_address().to_string();
+            let is_relayed = addr.contains("/p2p-circuit/");
+            telemetry.record(ConnectivityEvent::ConnectionEstablished {
+                remote_peer: peer_id.to_string(),
+                addr,
+                is_relayed,
+                num_established: num_established.get(),
+            });
+            if num_established.get() == 1 {
+                let _ = event_tx.send(NodeEvent::PeerDiscovered(peer_id)).await;
+            }
+        }
+        // Connection closed
+        SwarmEvent::ConnectionClosed { peer_id, num_established, .. } => {
+            telemetry.record(ConnectivityEvent::ConnectionClosed {
+                remote_peer: peer_id.to_string(),
+                duration_secs: 0,
+                was_relayed: false,
+                cause: None,
+            });
+            if num_established == 0 {
+                let _ = event_tx.send(NodeEvent::PeerDisconnected(peer_id)).await;
+            }
+        }
+        // Outgoing connection error
+        SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+            let err_str = format!("{}", error);
+            telemetry.record(ConnectivityEvent::DialFailure {
+                remote_peer: peer_id.map(|p| p.to_string()),
+                addr: "unknown".to_string(),
+                error: err_str,
+                is_relay: false,
+            });
         }
         _ => {}
     }

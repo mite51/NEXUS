@@ -38,6 +38,7 @@ libp2p = { version = "0.54", features = [
     "relay",
     "mdns",
     "identify",
+    "autonat",
     "ed25519",
     "macros",
 ] }

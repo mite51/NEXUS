@@ -1,7 +1,7 @@
 //! Composite network behaviour for NEXUS nodes
 
 use libp2p::{
-    gossipsub, identify, kad, mdns, relay,
+    autonat, dcutr, gossipsub, identify, kad, mdns, relay,
     request_response::{self, ProtocolSupport},
     swarm::NetworkBehaviour,
 };
@@ -24,6 +24,10 @@ pub struct NexusBehaviour {
     pub identify: identify::Behaviour,
     /// Relay client — for NAT traversal fallback
     pub relay_client: relay::client::Behaviour,
+    /// DCUtR — Direct Connection Upgrade through Relay (hole punching)
+    pub dcutr: dcutr::Behaviour,
+    /// AutoNAT — detect whether we're behind NAT
+    pub autonat: autonat::Behaviour,
 }
 
 impl NexusBehaviour {
@@ -73,6 +77,21 @@ impl NexusBehaviour {
             .with_push_listen_addr_updates(true),
         );
 
+        // DCUtR — allows hole punching through relays
+        let dcutr = dcutr::Behaviour::new(local_peer_id);
+
+        // AutoNAT — probe whether we're reachable from the internet
+        let autonat = autonat::Behaviour::new(
+            local_peer_id,
+            autonat::Config {
+                retry_interval: Duration::from_secs(60),
+                refresh_interval: Duration::from_secs(300),
+                confidence_max: 3,
+                throttle_server_period: Duration::from_secs(15),
+                ..Default::default()
+            },
+        );
+
         Ok(Self {
             kademlia,
             gossipsub,
@@ -80,6 +99,8 @@ impl NexusBehaviour {
             mdns,
             identify,
             relay_client: relay_behaviour,
+            dcutr,
+            autonat,
         })
     }
 }

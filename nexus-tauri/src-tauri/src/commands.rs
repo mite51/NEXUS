@@ -667,6 +667,9 @@ pub async fn start_node(
         ],
         bootstrap_peers,
         mdns_enabled: true,
+        relay_servers: vec![],
+        telemetry_enabled: true,
+        telemetry_dir: None,
     };
 
     state.start(keypair, config, app_handle).await
@@ -751,4 +754,17 @@ pub fn rename_file(manifest_path: &str, new_name: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to write manifest: {}", e))?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_connectivity_stats() -> Result<serde_json::Value, String> {
+    use nexus_core::network::{TelemetryCollector, TelemetryStats};
+
+    let collector = TelemetryCollector::new(
+        ".nexus-telemetry",
+        "unknown".to_string(),
+        true,
+    );
+    let stats = collector.stats();
+    serde_json::to_value(&stats).map_err(|e| e.to_string())
 }

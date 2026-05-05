@@ -444,6 +444,9 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
         listen_addrs: listen_addrs.to_vec(),
         bootstrap_peers,
         mdns_enabled: true,
+        relay_servers: vec![],
+        telemetry_enabled: true,
+        telemetry_dir: None,
     };
 
     let mut node = NexusNode::start(libp2p_keypair, config).await
@@ -545,6 +548,19 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
                     }
                 ).await;
             }
+            Some(NodeEvent::NatStatusChanged { status }) => {
+                println!("  NAT status: {:?}", status);
+            }
+            Some(NodeEvent::RelayReserved { relay_peer, relay_addr }) => {
+                println!("  Relay reserved: {} at {}", relay_peer, relay_addr);
+            }
+            Some(NodeEvent::HolePunchResult { remote_peer, success }) => {
+                if success {
+                    println!("  ✓ Hole punch succeeded with {}", remote_peer);
+                } else {
+                    println!("  ✗ Hole punch failed with {}", remote_peer);
+                }
+            }
             None => {
                 println!("  Node event channel closed — shutting down.");
                 break;
@@ -576,6 +592,9 @@ pub async fn ping_peer(vault_path: &str, addr_str: &str) -> Result<(), String> {
         listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
         bootstrap_peers: vec![],
         mdns_enabled: false,
+        relay_servers: vec![],
+        telemetry_enabled: true,
+        telemetry_dir: None,
     };
 
     let mut node = NexusNode::start(libp2p_keypair, config).await
@@ -668,6 +687,9 @@ pub async fn fetch(
         listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
         bootstrap_peers: vec![],
         mdns_enabled: false,
+        relay_servers: vec![],
+        telemetry_enabled: true,
+        telemetry_dir: None,
     };
 
     let mut node = NexusNode::start(libp2p_keypair, config).await
@@ -822,6 +844,9 @@ pub async fn send(
         listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
         bootstrap_peers: vec![],
         mdns_enabled: false,
+        relay_servers: vec![],
+        telemetry_enabled: true,
+        telemetry_dir: None,
     };
 
     let mut node = NexusNode::start(libp2p_keypair, config).await
