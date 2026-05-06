@@ -639,6 +639,88 @@ pub async fn ping_peer(vault_path: &str, addr_str: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn get_shard(vault_path: &str, cid: &str, addr_str: &str) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, _) = load_keys(vault_path, &passphrase)?;
+
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+
+    let addr: libp2p::Multiaddr = addr_str.parse()
+        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
+
+    let target_peer_id = addr.iter()
+        .find_map(|p| if let libp2p::multiaddr::Protocol::P2p(pid) = p { Some(pid) } else { None })
+        .ok_or("Multiaddr must contain /p2p/<peer_id>")?;
+
+    println!("📡 Requesting shard {} from {}...", &cid[..16], target_peer_id);
+
+    let config = NodeConfig {
+        listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
+        bootstrap_peers: vec![],
+        mdns_enabled: false,
+        relay_servers: vec![],
+        telemetry_enabled: false,
+        telemetry_dir: None,
+    };
+
+    let mut node = NexusNode::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start node: {}", e))?;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Dial the peer
+    node.dial(addr).await.map_err(|e| format!("Dial failed: {}", e))?;
+
+    // Wait for connection
+    let start = std::time::Instant::now();
+    let connected = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::PeerDiscovered(p) = event {
+                if p == target_peer_id { return true; }
+            }
+        }
+        false
+    }).await.unwrap_or(false);
+
+    if !connected {
+        node.shutdown().await.ok();
+        return Err("Failed to connect within 10s".into());
+    }
+    let connect_time = start.elapsed();
+    println!("  ✅ Connected in {:?}", connect_time);
+
+    // Send GetShard request
+    use nexus_core::network::NodeCommand;
+    node.command_tx.send(NodeCommand::RequestShard {
+        peer: target_peer_id,
+        cid: cid.to_string(),
+    }).await.map_err(|e| format!("Send failed: {}", e))?;
+
+    // Wait for shard response
+    let fetch_start = std::time::Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(15), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::ShardReceived { peer: _, response } = event {
+                return Some(response);
+            }
+        }
+        None
+    }).await;
+
+    match result {
+        Ok(Some(response)) => {
+            let elapsed = fetch_start.elapsed();
+            println!("  ✅ Response received in {:?}: {:?}", elapsed, response);
+        }
+        _ => {
+            println!("  ❌ No shard response within 15s");
+        }
+    }
+
+    node.shutdown().await.ok();
+    Ok(())
+}
+
 pub async fn fetch(
     manifest_path: &str,
     peer_addr: &str,

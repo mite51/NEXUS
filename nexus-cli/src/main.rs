@@ -95,6 +95,16 @@ enum Commands {
         #[arg(long, default_value = "vault.json")]
         vault: String,
     },
+    /// Request a single shard from a peer (connectivity test)
+    GetShard {
+        /// CID of the shard to request
+        cid: String,
+        /// Multiaddr of the peer holding the shard
+        #[arg(long)]
+        from: String,
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
     /// Fetch shards from a peer and decrypt (full receive flow)
     Fetch {
         /// Path to the .nexus manifest file
@@ -198,6 +208,10 @@ fn main() {
         Commands::Ping { addr, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(commands::ping_peer(&vault, &addr))
+        }
+        Commands::GetShard { cid, from, vault } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(commands::get_shard(&vault, &cid, &from))
         }
         Commands::Fetch { manifest, from, share, output, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
