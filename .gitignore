@@ -1,5 +1,6 @@
 # Build artifacts
 /target/
+**/target/
 
 # IDE
 .idea/
@@ -11,7 +12,42 @@
 .DS_Store
 Thumbs.db
 
-# Node (nexus-ui)
+# Node
 node_modules/
 dist/
-node_modules/
+
+# ---------------------------------------------------------------------------
+# Application runtime data (vaults, identities, shard stores, queues, etc.)
+# These are produced by the Nexus app/CLI at runtime and must never be
+# committed. They contain user keys, encrypted content, and local state.
+# ---------------------------------------------------------------------------
+
+# Vaults & identity
+vault.json
+*.vault.json
+**/vault.json
+
+# Content-addressed shard storage
+.nexus-store/
+**/.nexus-store/
+shards/
+**/shards/
+
+# Telemetry
+.nexus-telemetry/
+**/.nexus-telemetry/
+
+# Received / sent state and manifests
+.nexus-received.json
+.nexus-received-manifests/
+.nexus-send-queue.json
+received/
+**/received/
+
+# Contacts, config, and other local state
+.nexus-contacts.json
+.nexus-config.json
+
+# Encrypted bundle / manifest files and share grants
+*.nexus
+*.share-*.json

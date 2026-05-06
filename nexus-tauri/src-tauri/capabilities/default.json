@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for the main NEXUS window. Grants access to the dialog, notification, and shell plugins, plus core event/window APIs needed by the Svelte frontend.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "notification:default",
+    "shell:allow-open"
+  ]
+}
