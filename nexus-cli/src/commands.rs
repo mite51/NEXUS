@@ -3,6 +3,7 @@ use nexus_core::crypto::pre::{self, PreKeypair, PreSigner, PrePublicKey};
 use nexus_core::identity::{Did, IdentityKeypair, IdentityVault};
 use nexus_core::manifest::{NexusManifest, ShareGrant};
 use nexus_core::network::{NexusNode, NodeConfig, NodeEvent};
+use nexus_core::network::{RelayServer, RelayConfig, RelayServerEvent};
 use nexus_core::storage::shard::{self, Shard, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::{ShardStore, compute_cid};
 use serde::{Deserialize, Serialize};
@@ -1037,5 +1038,72 @@ pub fn store_verify(dir: &str) -> Result<(), String> {
     } else {
         println!("⚠ {} OK, {} CORRUPT", ok, corrupt);
     }
+    Ok(())
+}
+
+// --- Relay Server ---
+
+pub async fn run_relay(
+    vault_path: &str,
+    port: u16,
+    max_circuits: u32,
+    max_reservations_per_peer: u32,
+) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, _pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    // Convert identity key to libp2p keypair
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+
+    let config = RelayConfig {
+        listen_addrs: vec![
+            format!("/ip4/0.0.0.0/tcp/{}", port),
+            format!("/ip4/0.0.0.0/udp/{}/quic-v1", port),
+        ],
+        max_reservations_per_peer,
+        max_circuits,
+        ..Default::default()
+    };
+
+    println!("🔁 NEXUS Relay Server");
+    println!("  PeerId:  {}", libp2p_keypair.public().to_peer_id());
+    println!("  Port:    {}", port);
+    println!("  Max circuits: {}", max_circuits);
+    println!("  Max reservations/peer: {}", max_reservations_per_peer);
+    println!();
+
+    let mut server = RelayServer::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start relay: {}", e))?;
+
+    // Print events as they arrive
+    loop {
+        match server.event_rx.recv().await {
+            Some(event) => match event {
+                RelayServerEvent::Listening(addr) => {
+                    println!("  📡 Listening: {}/p2p/{}", addr, server.peer_id);
+                }
+                RelayServerEvent::PeerConnected(peer) => {
+                    println!("  ✅ Peer connected: {}", &peer[..16]);
+                }
+                RelayServerEvent::PeerDisconnected(peer) => {
+                    println!("  ❌ Peer disconnected: {}", &peer[..16]);
+                }
+                RelayServerEvent::ReservationAccepted { peer } => {
+                    println!("  📋 Reservation accepted: {}", &peer[..16]);
+                }
+                RelayServerEvent::ReservationExpired { peer } => {
+                    println!("  ⏰ Reservation expired: {}", &peer[..16]);
+                }
+                RelayServerEvent::CircuitOpened { src, dst } => {
+                    println!("  🔗 Circuit opened: {} → {}", &src[..16], &dst[..16]);
+                }
+                RelayServerEvent::CircuitClosed { src, dst } => {
+                    println!("  🔌 Circuit closed: {} → {}", &src[..16], &dst[..16]);
+                }
+            },
+            None => break,
+        }
+    }
+
     Ok(())
 }

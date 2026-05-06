@@ -2,8 +2,10 @@
 
 mod commands;
 mod node_state;
+mod relay_state;
 
 use node_state::NodeState;
+use relay_state::RelayState;
 
 fn main() {
     tauri::Builder::default()
@@ -11,6 +13,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(NodeState::new())
+        .manage(RelayState::new())
         .invoke_handler(tauri::generate_handler![
             commands::create_identity,
             commands::get_identity,
@@ -42,6 +45,9 @@ fn main() {
             commands::import_file_bundle,
             commands::list_shards,
             commands::verify_store,
+            commands::start_relay,
+            commands::stop_relay,
+            commands::get_relay_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

@@ -14,11 +14,13 @@ pub mod protocol;
 pub mod send_queue;
 pub mod delivery;
 pub mod telemetry;
+pub mod relay_server;
 
 pub use node::{NexusNode, NodeConfig, NodeEvent, NodeCommand};
 pub use behaviour::NexusBehaviour;
 pub use send_queue::{SendQueue, QueuedSend, SendStatus};
 pub use delivery::{spawn_delivery_worker, DeliveryConfig};
 pub use telemetry::{TelemetryCollector, TelemetryStats, ConnectivityEvent, NatStatus};
+pub use relay_server::{RelayServer, RelayConfig, RelayServerEvent};
 pub use libp2p::PeerId;
 pub use libp2p::Multiaddr;

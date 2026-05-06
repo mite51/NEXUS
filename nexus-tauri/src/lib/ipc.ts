@@ -268,3 +268,36 @@ export async function exportFileBundle(manifestPath: string, outputPath: string)
 export async function importFileBundle(bundlePath: string): Promise<string> {
   return invoke('import_file_bundle', { bundlePath });
 }
+
+// --- Relay Server ---
+
+export interface RelayInfo {
+  running: boolean;
+  peer_id: string | null;
+  stats: {
+    running: boolean;
+    peer_id: string | null;
+    listen_addrs: string[];
+    connected_peers: number;
+    active_reservations: number;
+    total_circuits: number;
+  };
+}
+
+export async function startRelay(
+  vaultPath: string,
+  passphrase: string,
+  port?: number,
+  maxCircuits?: number,
+  maxReservationsPerPeer?: number,
+): Promise<string> {
+  return invoke('start_relay', { vaultPath, passphrase, port, maxCircuits, maxReservationsPerPeer });
+}
+
+export async function stopRelay(): Promise<void> {
+  return invoke('stop_relay');
+}
+
+export async function getRelayInfo(): Promise<RelayInfo> {
+  return invoke('get_relay_info');
+}

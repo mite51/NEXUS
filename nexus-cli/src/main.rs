@@ -121,6 +121,20 @@ enum Commands {
         #[arg(long, default_value = "vault.json")]
         vault: String,
     },
+    /// Start a relay server (helps NATted peers connect)
+    Relay {
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+        /// Listen port (TCP and QUIC)
+        #[arg(long, default_value_t = 4001)]
+        port: u16,
+        /// Max concurrent relay circuits
+        #[arg(long, default_value_t = 128)]
+        max_circuits: u32,
+        /// Max reservations per peer
+        #[arg(long, default_value_t = 4)]
+        max_reservations_per_peer: u32,
+    },
     /// Manage the local shard store
     Store {
         #[command(subcommand)]
@@ -189,6 +203,10 @@ fn main() {
         Commands::Send { manifest, to, share, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(commands::send(&manifest, &to, share.as_deref(), &vault))
+        }
+        Commands::Relay { vault, port, max_circuits, max_reservations_per_peer } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(commands::run_relay(&vault, port, max_circuits, max_reservations_per_peer))
         }
         Commands::Store { action } => match action {
             StoreAction::Stats { dir } => commands::store_stats(&dir),

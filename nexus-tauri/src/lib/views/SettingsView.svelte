@@ -2,8 +2,8 @@
   import { onMount } from 'svelte';
   import { identity, passphrase, showToast, nodeOnline } from '../stores/app';
   import { theme, toggleTheme } from '../stores/theme';
-  import { getConfig, saveConfig, getConnectivityStats } from '../ipc';
-  import type { ConnectivityStats } from '../ipc';
+  import { getConfig, saveConfig, getConnectivityStats, startRelay, stopRelay, getRelayInfo } from '../ipc';
+  import type { ConnectivityStats, RelayInfo } from '../ipc';
 
   let listenPort: string = '';
   let bootstrapPeers: string = '';
@@ -13,6 +13,11 @@
   let saving = false;
   let connectivityStats: ConnectivityStats | null = null;
   let loadingStats = false;
+  let relayInfo: RelayInfo | null = null;
+  let relayPort: string = '4002';
+  let relayMaxCircuits: string = '128';
+  let relayStarting = false;
+  let relayStopping = false;
 
   onMount(async () => {
     try {
@@ -23,6 +28,7 @@
       telemetryEnabled = cfg.telemetry_enabled ?? true;
     } catch (_) {}
     await refreshStats();
+    await refreshRelay();
   });
 
   async function refreshStats() {
@@ -33,6 +39,48 @@
       connectivityStats = null;
     }
     loadingStats = false;
+  }
+
+  async function refreshRelay() {
+    try {
+      relayInfo = await getRelayInfo();
+    } catch (_) {
+      relayInfo = null;
+    }
+  }
+
+  async function handleStartRelay() {
+    if (!$passphrase) {
+      showToast('⚠ Unlock vault first');
+      return;
+    }
+    relayStarting = true;
+    try {
+      const peerId = await startRelay(
+        'vault.json',
+        $passphrase,
+        parseInt(relayPort) || 4002,
+        parseInt(relayMaxCircuits) || 128,
+        4
+      );
+      showToast(`✓ Relay started: ${peerId.slice(0, 16)}...`);
+      await refreshRelay();
+    } catch (e: any) {
+      showToast(`⚠ ${e}`);
+    }
+    relayStarting = false;
+  }
+
+  async function handleStopRelay() {
+    relayStopping = true;
+    try {
+      await stopRelay();
+      showToast('✓ Relay stopped');
+      relayInfo = null;
+    } catch (e: any) {
+      showToast(`⚠ ${e}`);
+    }
+    relayStopping = false;
   }
 
   async function handleSave() {
@@ -165,6 +213,85 @@
       </button>
       <span class="save-hint">Takes effect on next node restart</span>
     </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">Relay Server</div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Status</div>
+        <div class="setting-value">
+          <span class="status-dot" class:online={relayInfo?.running}></span>
+          {relayInfo?.running ? 'Running' : 'Stopped'}
+        </div>
+      </div>
+    </div>
+
+    {#if relayInfo?.running}
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">Relay Peer ID</div>
+          <div class="setting-value mono truncated">{relayInfo.peer_id}</div>
+        </div>
+      </div>
+
+      <div class="health-grid">
+        <div class="health-stat">
+          <span class="health-value">{relayInfo.stats.connected_peers}</span>
+          <span class="health-label">Connected</span>
+        </div>
+        <div class="health-stat">
+          <span class="health-value">{relayInfo.stats.active_reservations}</span>
+          <span class="health-label">Reservations</span>
+        </div>
+        <div class="health-stat">
+          <span class="health-value">{relayInfo.stats.total_circuits}</span>
+          <span class="health-label">Circuits</span>
+        </div>
+      </div>
+
+      {#if relayInfo.stats.listen_addrs.length > 0}
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Listen Addresses</div>
+            {#each relayInfo.stats.listen_addrs as addr}
+              <div class="setting-value mono" style="font-size: 10px;">{addr}/p2p/{relayInfo.peer_id}</div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <div class="save-row">
+        <button class="stop-btn" on:click={handleStopRelay} disabled={relayStopping}>
+          {relayStopping ? 'Stopping…' : '⏹ Stop Relay'}
+        </button>
+        <button class="refresh-btn" on:click={refreshRelay}>↻ Refresh</button>
+      </div>
+    {:else}
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">Port</div>
+          <div class="setting-desc">TCP and QUIC listen port for relay</div>
+        </div>
+        <input type="text" class="setting-input" placeholder="4002" bind:value={relayPort} />
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">Max Circuits</div>
+          <div class="setting-desc">Concurrent relayed connections</div>
+        </div>
+        <input type="text" class="setting-input" placeholder="128" bind:value={relayMaxCircuits} />
+      </div>
+
+      <div class="save-row">
+        <button class="save-btn" on:click={handleStartRelay} disabled={relayStarting}>
+          {relayStarting ? 'Starting…' : '▶ Start Relay'}
+        </button>
+        <span class="save-hint">Run a relay to help NATted peers connect</span>
+      </div>
+    {/if}
   </div>
 
   <div class="section-card">
@@ -317,6 +444,13 @@
   .save-btn:hover { opacity: 0.85; }
   .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .save-hint { font-size: 11px; color: var(--text-secondary); }
+  .stop-btn {
+    padding: 8px 16px; background: var(--danger, #e74c3c); border: none;
+    border-radius: 6px; color: white; font-size: 12px;
+    cursor: pointer; font-weight: 500;
+  }
+  .stop-btn:hover { opacity: 0.85; }
+  .stop-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .status-dot {
     display: inline-block; width: 8px; height: 8px;
     border-radius: 50%; background: var(--text-secondary);
