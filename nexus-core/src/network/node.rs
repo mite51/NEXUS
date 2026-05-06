@@ -5,7 +5,7 @@
 
 use libp2p::{
     identity::Keypair, Multiaddr, PeerId, Swarm, SwarmBuilder,
-    noise, tcp, yamux,
+    noise, tcp, yamux, relay,
     swarm::SwarmEvent,
     gossipsub, autonat, dcutr,
     request_response,
@@ -227,38 +227,29 @@ impl NexusNode {
             config.telemetry_enabled,
         );
 
-        // Collect relay servers to dial after startup
+        // Collect relay servers to reserve after connecting
         let relay_servers = config.relay_servers.clone();
+        // Parse relay addresses into (PeerId, Multiaddr) for tracking
+        let relay_peers: Vec<(PeerId, Multiaddr)> = relay_servers.iter()
+            .filter_map(|addr_str| {
+                let addr: Multiaddr = addr_str.parse().ok()?;
+                let peer_id = addr.iter().find_map(|p| match p {
+                    libp2p::multiaddr::Protocol::P2p(id) => Some(id),
+                    _ => None,
+                })?;
+                Some((peer_id, addr))
+            })
+            .collect();
 
         // Spawn the event loop
         tokio::spawn(async move {
-        // Dial relay servers for reservation (with retry)
-            for relay_addr_str in &relay_servers {
-                if let Ok(addr) = relay_addr_str.parse::<Multiaddr>() {
-                    let relay_listen = addr.clone()
-                        .with(libp2p::multiaddr::Protocol::P2pCircuit);
-                    match swarm.listen_on(relay_listen.clone()) {
-                        Ok(_) => {
-                            telemetry.record(ConnectivityEvent::RelayReservation {
-                                relay_peer: "unknown".to_string(),
-                                relay_addr: relay_addr_str.clone(),
-                                success: true,
-                                error: None,
-                                duration_ms: 0,
-                            });
-                        }
-                        Err(e) => {
-                            telemetry.record(ConnectivityEvent::RelayReservation {
-                                relay_peer: "unknown".to_string(),
-                                relay_addr: relay_addr_str.clone(),
-                                success: false,
-                                error: Some(e.to_string()),
-                                duration_ms: 0,
-                            });
-                        }
-                    }
-                }
+            // Dial relay servers (connection triggers reservation later)
+            for (_, addr) in &relay_peers {
+                let _ = swarm.dial(addr.clone());
             }
+
+            // Track which relays we've reserved with
+            let mut reserved_relays: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
 
             // Periodic relay reconnection timer (every 5 minutes)
             let mut relay_reconnect = tokio::time::interval(Duration::from_secs(300));
@@ -337,6 +328,17 @@ impl NexusNode {
                     }
                     // Handle swarm events
                     event = swarm.select_next_some() => {
+                        // Check if this is a connection to a relay peer — if so, reserve
+                        if let SwarmEvent::ConnectionEstablished { peer_id, num_established, .. } = &event {
+                            if num_established.get() == 1 && !reserved_relays.contains(peer_id) {
+                                if let Some((_, relay_addr)) = relay_peers.iter().find(|(p, _)| p == peer_id) {
+                                    let relay_listen = relay_addr.clone()
+                                        .with(libp2p::multiaddr::Protocol::P2pCircuit);
+                                    let _ = swarm.listen_on(relay_listen);
+                                    reserved_relays.insert(*peer_id);
+                                }
+                            }
+                        }
                         handle_swarm_event(&mut swarm, event, &event_tx, &telemetry).await;
                     }
                     // Periodic relay reconnection
@@ -436,7 +438,7 @@ impl NexusNode {
 
 /// Process a swarm event and emit NodeEvents
 async fn handle_swarm_event(
-    _swarm: &mut Swarm<NexusBehaviour>,
+    swarm: &mut Swarm<NexusBehaviour>,
     event: SwarmEvent<NexusBehaviourEvent>,
     event_tx: &mpsc::Sender<NodeEvent>,
     telemetry: &TelemetryCollector,
@@ -474,7 +476,7 @@ async fn handle_swarm_event(
                         }
                         NexusRequest::Ping => {
                             // Auto-respond to pings
-                            let _ = _swarm.behaviour_mut().request_response
+                            let _ = swarm.behaviour_mut().request_response
                                 .send_response(channel, NexusResponse::Pong);
                         }
                         NexusRequest::PushShard { cid, data } => {
@@ -566,6 +568,42 @@ async fn handle_swarm_event(
             if num_established == 0 {
                 let _ = event_tx.send(NodeEvent::PeerDisconnected(peer_id)).await;
             }
+        }
+        // Relay client events
+        SwarmEvent::Behaviour(NexusBehaviourEvent::RelayClient(
+            relay::client::Event::ReservationReqAccepted { relay_peer_id, renewal: _, .. }
+        )) => {
+            let relay_addr_str = format!("relay:{}", relay_peer_id);
+            telemetry.record(ConnectivityEvent::RelayReservation {
+                relay_peer: relay_peer_id.to_string(),
+                relay_addr: relay_addr_str,
+                success: true,
+                error: None,
+                duration_ms: 0,
+            });
+            // Find relay address from external addresses
+            let relay_addr = swarm.external_addresses()
+                .find(|a| a.to_string().contains(&relay_peer_id.to_string()))
+                .cloned()
+                .unwrap_or_else(|| format!("/p2p/{}/p2p-circuit", relay_peer_id).parse().unwrap());
+            let _ = event_tx.send(NodeEvent::RelayReserved {
+                relay_peer: relay_peer_id,
+                relay_addr,
+            }).await;
+        }
+        SwarmEvent::Behaviour(NexusBehaviourEvent::RelayClient(
+            relay::client::Event::InboundCircuitEstablished { src_peer_id, .. }
+        )) => {
+            let _ = event_tx.send(NodeEvent::PeerDiscovered(src_peer_id)).await;
+        }
+        SwarmEvent::Behaviour(NexusBehaviourEvent::RelayClient(event)) => {
+            eprintln!("  [debug] relay_client event: {:?}", event);
+        }
+        SwarmEvent::ListenerError { listener_id, error } => {
+            eprintln!("  [debug] listener error (id={:?}): {}", listener_id, error);
+        }
+        SwarmEvent::ListenerClosed { listener_id, reason, .. } => {
+            eprintln!("  [debug] listener closed (id={:?}): {:?}", listener_id, reason);
         }
         // Outgoing connection error
         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {

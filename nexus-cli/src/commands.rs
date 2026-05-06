@@ -408,7 +408,7 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
 
 // --- Network Commands ---
 
-pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[String]) -> Result<(), String> {
+pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[String], relay_servers: &[String]) -> Result<(), String> {
     let passphrase = prompt_passphrase("Vault passphrase: ")?;
     let (keypair, _pre_kp) = load_keys(vault_path, &passphrase)?;
     let did = Did::from_public_identity(&keypair.public_identity());
@@ -445,7 +445,7 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
         listen_addrs: listen_addrs.to_vec(),
         bootstrap_peers,
         mdns_enabled: true,
-        relay_servers: vec![],
+        relay_servers: relay_servers.to_vec(),
         telemetry_enabled: true,
         telemetry_dir: None,
     };

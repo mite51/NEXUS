@@ -84,6 +84,9 @@ enum Commands {
         /// Bootstrap peer (multiaddr, can be specified multiple times)
         #[arg(long)]
         bootstrap: Vec<String>,
+        /// Relay server (multiaddr, can be specified multiple times)
+        #[arg(long)]
+        relay: Vec<String>,
     },
     /// Ping a peer node to check connectivity
     Ping {
@@ -188,9 +191,9 @@ fn main() {
             commands::decrypt_shared(&manifest, &share, output.as_deref(), &vault)
         }
         Commands::Share { manifest, to, vault } => commands::share(&manifest, &to, &vault),
-        Commands::Node { vault, listen, bootstrap } => {
+        Commands::Node { vault, listen, bootstrap, relay } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(commands::run_node(&vault, &listen, &bootstrap))
+            rt.block_on(commands::run_node(&vault, &listen, &bootstrap, &relay))
         }
         Commands::Ping { addr, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
