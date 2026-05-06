@@ -11,22 +11,28 @@ env:
 
 jobs:
   test:
-    name: Test (Rust)
+    name: Test (nexus-core)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "nexus-core -> target"
+          workspaces: ". -> target"
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
-      - name: Run tests
-        run: cargo test -- --test-threads=1
-      - name: Check warnings
-        run: cargo build 2>&1 | grep -c "^warning" | xargs test 0 -eq
+          sudo apt-get install -y libssl-dev pkg-config
+      - name: Run tests (nexus-core)
+        run: cargo test -p nexus-core -- --test-threads=1
+      - name: Build core + CLI (no warnings)
+        run: |
+          output=$(cargo build -p nexus-core -p nexus-cli 2>&1)
+          echo "$output"
+          if echo "$output" | grep -q "^warning\["; then
+            echo "::error::Rust warnings detected"
+            exit 1
+          fi
 
   frontend:
     name: Frontend Build
@@ -42,8 +48,8 @@ jobs:
           npm ci
           npm run build
 
-  release:
-    name: Release Build
+  tauri-build:
+    name: Tauri Build (${{ matrix.platform }})
     needs: [test, frontend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     strategy:
@@ -64,23 +70,39 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "nexus-core -> target"
+          workspaces: ". -> target"
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libappindicator3-dev
-      - name: Install frontend deps
+          sudo apt-get install -y \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libappindicator3-dev \
+            pkg-config
+
+      - name: Install frontend deps & build
         working-directory: nexus-tauri
-        run: npm ci
+        run: |
+          npm ci
+          npm run build
+
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
+        run: cargo install tauri-cli --version "^2" --locked
+
       - name: Build Tauri app
         working-directory: nexus-tauri/src-tauri
         run: cargo tauri build --target ${{ matrix.target }}
+        env:
+          # Skip code signing on CI
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
