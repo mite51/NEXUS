@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { identity, toast as toastStore, showToast } from './lib/stores/app';
+  import { identity, toast as toastStore, showToast, passphrase as passStore } from './lib/stores/app';
   import { theme } from './lib/stores/theme';
-  import { getIdentity } from './lib/ipc';
+  import { getIdentity, getConfig, startNode } from './lib/ipc';
   import { initNotifications, notifyFileReceived } from './lib/notifications';
   import { listen } from '@tauri-apps/api/event';
   import Setup from './lib/views/Setup.svelte';
@@ -37,8 +37,20 @@
     }
   }
 
-  function onSetupComplete() { screen = 'main'; }
-  function onUnlockComplete() { screen = 'main'; }
+  function onSetupComplete() { screen = 'main'; autoStartIfEnabled(); }
+  function onUnlockComplete() { screen = 'main'; autoStartIfEnabled(); }
+
+  async function autoStartIfEnabled() {
+    try {
+      const cfg = await getConfig();
+      if (cfg.auto_start_node) {
+        const peerId = await startNode(VAULT_PATH, $passStore);
+        showToast(`Node auto-started: ${peerId.slice(0, 16)}…`);
+      }
+    } catch (_) {
+      // Silently fail — user can start manually from Settings
+    }
+  }
 
   checkVault();
 </script>

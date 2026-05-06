@@ -10,6 +10,7 @@
   let bootstrapPeers: string = '';
   let relayServers: string = '';
   let telemetryEnabled: boolean = true;
+  let autoStartNode: boolean = false;
   let exportingKey = false;
   let saving = false;
   let connectivityStats: ConnectivityStats | null = null;
@@ -30,6 +31,7 @@
       bootstrapPeers = cfg.bootstrap_peers.join('\n');
       relayServers = cfg.relay_servers.join('\n');
       telemetryEnabled = cfg.telemetry_enabled ?? true;
+      autoStartNode = cfg.auto_start_node ?? false;
     } catch (_) {}
     await refreshNode();
     await refreshStats();
@@ -147,6 +149,7 @@
         bootstrap_peers: bootstrapPeers.split('\n').map(s => s.trim()).filter(Boolean),
         relay_servers: relayServers.split('\n').map(s => s.trim()).filter(Boolean),
         telemetry_enabled: telemetryEnabled,
+        auto_start_node: autoStartNode,
       });
       showToast('✓ Settings saved');
     } catch (e: any) {
@@ -270,6 +273,17 @@
         <div class="muted" style="font-size: 11px; padding: 4px 0;">No peers connected. Peers on the same network appear via mDNS.</div>
       {/if}
     {/if}
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Auto-start Node</div>
+        <div class="setting-desc">Start the node automatically when the app opens</div>
+      </div>
+      <label class="toggle-label">
+        <input type="checkbox" bind:checked={autoStartNode} />
+        <span class="toggle-text">{autoStartNode ? 'On' : 'Off'}</span>
+      </label>
+    </div>
 
     <div class="setting-row" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 16px;">
       <div class="setting-info">

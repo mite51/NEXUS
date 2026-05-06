@@ -753,6 +753,8 @@ pub struct AppConfig {
     pub relay_servers: Vec<String>,
     #[serde(default = "default_telemetry_enabled")]
     pub telemetry_enabled: bool,
+    #[serde(default)]
+    pub auto_start_node: bool,
 }
 
 fn default_telemetry_enabled() -> bool { true }
@@ -764,6 +766,7 @@ impl Default for AppConfig {
             bootstrap_peers: vec![],
             relay_servers: vec![],
             telemetry_enabled: true,
+            auto_start_node: false,
         }
     }
 }

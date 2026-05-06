@@ -228,6 +228,7 @@ export interface AppConfig {
   bootstrap_peers: string[];
   relay_servers: string[];
   telemetry_enabled: boolean;
+  auto_start_node: boolean;
 }
 
 export interface ConnectivityStats {
