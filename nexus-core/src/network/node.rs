@@ -205,9 +205,14 @@ impl NexusNode {
             swarm.behaviour_mut().kademlia.add_address(peer_id, addr.clone());
         }
 
+        // Dial bootstrap peers to establish initial connections
+        for (_peer_id, addr) in &config.bootstrap_peers {
+            let _ = swarm.dial(addr.clone());
+        }
+
         // Bootstrap Kademlia if we have peers
         if !config.bootstrap_peers.is_empty() {
-            swarm.behaviour_mut().kademlia.bootstrap()?;
+            let _ = swarm.behaviour_mut().kademlia.bootstrap();
         }
 
         // Create channels
