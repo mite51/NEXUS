@@ -31,6 +31,11 @@ A peer-to-peer encrypted file sharing application. You encrypt files locally, sp
   npm --version    # 10.x
   ```
 
+- **Tauri CLI** (required to run/build the desktop app):
+  ```bash
+  cargo install tauri-cli --version "^2" --locked
+  ```
+
 ### macOS
 
 ```bash
@@ -67,6 +72,17 @@ git clone https://github.com/mite51/NEXUS.git
 cd NEXUS
 ```
 
+### Build the frontend (required first)
+
+The Tauri crate embeds the built frontend at compile time, so the `dist/` output must exist before any workspace-level `cargo build` or `cargo test`.
+
+```bash
+cd nexus-tauri
+npm install
+npm run build
+cd ..
+```
+
 ### Build the core library + CLI
 
 ```bash
@@ -81,14 +97,7 @@ cargo test -- --test-threads=1
 
 You should see: **56 tests passing, 0 failures.**
 
-### Build the frontend
-
-```bash
-cd nexus-tauri
-npm install
-npm run build
-cd ..
-```
+> Tip: if you only want to iterate on the core library and CLI without rebuilding Tauri, you can scope tests with `cargo test --workspace --exclude nexus-tauri -- --test-threads=1`.
 
 ### Run the desktop app (dev mode)
 
@@ -361,22 +370,30 @@ nexus stats
 ## Quick Start (TL;DR)
 
 ```bash
-# 1. Clone & build
+# 1. Clone
 git clone https://github.com/mite51/NEXUS.git && cd NEXUS
+
+# 2. Install Tauri CLI (one-time)
+cargo install tauri-cli --version "^2" --locked
+
+# 3. Build frontend (required before workspace cargo build)
+(cd nexus-tauri && npm install && npm run build)
+
+# 4. Build & test the workspace
 cargo build && cargo test -- --test-threads=1
 
-# 2. Create identity
+# 5. Create identity
 cargo run -p nexus-cli -- init --vault vault.json
 
-# 3. Encrypt a file
+# 6. Encrypt a file
 echo "hello NEXUS" > test.txt
 cargo run -p nexus-cli -- encrypt test.txt --vault vault.json
 
-# 4. Start node
+# 7. Start node
 cargo run -p nexus-cli -- node --vault vault.json
 
-# 5. Launch desktop app (optional)
-cd nexus-tauri && npm install && cd src-tauri && cargo tauri dev
+# 8. Launch desktop app (optional)
+cd nexus-tauri/src-tauri && cargo tauri dev
 ```
 
 You're in the network. 🚀
