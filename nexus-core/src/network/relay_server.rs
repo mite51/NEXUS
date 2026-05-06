@@ -16,6 +16,53 @@ use libp2p::{
 use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::io::{AsyncWriteExt, AsyncBufReadExt, BufReader};
+
+/// Attempt to detect public IP via simple HTTP services.
+/// Tries multiple services in order, returns first success.
+pub async fn detect_public_ip() -> Option<String> {
+    let services = [
+        ("ifconfig.me", 80, "GET / HTTP/1.0\r\nHost: ifconfig.me\r\n\r\n"),
+        ("api.ipify.org", 80, "GET / HTTP/1.0\r\nHost: api.ipify.org\r\n\r\n"),
+    ];
+    for (host, port, request) in services {
+        if let Ok(ip) = probe_ip(host, port, request).await {
+            return Some(ip);
+        }
+    }
+    None
+}
+
+async fn probe_ip(host: &str, port: u16, request: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let addr = tokio::net::lookup_host(format!("{}:{}", host, port))
+        .await?
+        .next()
+        .ok_or("no addr")?;
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::net::TcpStream::connect(addr),
+    ).await??;
+    stream.write_all(request.as_bytes()).await?;
+    let reader = BufReader::new(stream);
+    let mut lines = reader.lines();
+    let mut body = String::new();
+    let mut past_headers = false;
+    while let Some(line) = lines.next_line().await? {
+        if past_headers {
+            body = line.trim().to_string();
+            break;
+        }
+        if line.is_empty() {
+            past_headers = true;
+        }
+    }
+    // Validate it looks like an IP
+    if body.parse::<std::net::IpAddr>().is_ok() {
+        Ok(body)
+    } else {
+        Err("not a valid IP".into())
+    }
+}
 
 /// Combined behaviour for a relay server
 #[derive(NetworkBehaviour)]
@@ -35,6 +82,8 @@ pub struct RelayBehaviour {
 pub struct RelayConfig {
     /// Listen addresses
     pub listen_addrs: Vec<String>,
+    /// Optional public IP to advertise (auto-detected if None)
+    pub public_address: Option<String>,
     /// Max reservations per peer
     pub max_reservations_per_peer: u32,
     /// Max circuits (concurrent relayed connections)
@@ -54,6 +103,7 @@ impl Default for RelayConfig {
                 "/ip4/0.0.0.0/tcp/4001".to_string(),
                 "/ip4/0.0.0.0/udp/4001/quic-v1".to_string(),
             ],
+            public_address: None,
             max_reservations_per_peer: 4,
             max_circuits: 128,
             reservation_duration_secs: 3600,
@@ -67,6 +117,7 @@ impl Default for RelayConfig {
 #[derive(Debug, Clone)]
 pub enum RelayServerEvent {
     Listening(String),
+    PublicIpDetected(String),
     ReservationAccepted { peer: String },
     ReservationExpired { peer: String },
     CircuitOpened { src: String, dst: String },
@@ -155,8 +206,31 @@ impl RelayServer {
             swarm.listen_on(addr)?;
         }
 
+        // Determine public IP: use explicit config, or auto-detect
+        let public_ip = if let Some(ref ip) = config.public_address {
+            Some(ip.clone())
+        } else {
+            detect_public_ip().await
+        };
+
+        // Add external addresses so Identify advertises them to peers
+        if let Some(ref ip) = public_ip {
+            for addr_str in &config.listen_addrs {
+                // Replace 0.0.0.0 with actual public IP
+                let external = addr_str.replace("0.0.0.0", ip);
+                if let Ok(ma) = external.parse::<Multiaddr>() {
+                    swarm.add_external_address(ma);
+                }
+            }
+        }
+
         let (event_tx, event_rx) = mpsc::channel::<RelayServerEvent>(256);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+        // Emit public IP as a log-worthy event
+        if let Some(ref ip) = public_ip {
+            let _ = event_tx.send(RelayServerEvent::PublicIpDetected(ip.clone())).await;
+        }
 
         // Spawn event loop
         tokio::spawn(async move {

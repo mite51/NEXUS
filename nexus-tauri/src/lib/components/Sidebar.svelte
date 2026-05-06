@@ -17,7 +17,6 @@
     { id: 'shared', icon: '📨', label: 'Shared With Me' },
     { id: 'outbox', icon: '📤', label: 'Outbox' },
     { id: 'contacts', icon: '👤', label: 'Contacts' },
-    { id: 'peers', icon: '🌐', label: 'Peers' },
     { id: 'store', icon: '📦', label: 'Store' },
     { id: 'logs', icon: '📋', label: 'Logs' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },

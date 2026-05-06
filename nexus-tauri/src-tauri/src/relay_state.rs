@@ -24,6 +24,7 @@ struct RelayHandle {
 pub struct RelayStats {
     pub running: bool,
     pub peer_id: Option<String>,
+    pub public_ip: Option<String>,
     pub listen_addrs: Vec<String>,
     pub connected_peers: u32,
     pub active_reservations: u32,
@@ -74,9 +75,10 @@ impl RelayState {
         let mut server = RelayServer::start(keypair, config).await
             .map_err(|e| format!("Failed to start relay: {}", e))?;
 
-        let stats = Arc::new(Mutex::new(RelayStats {
+                let stats = Arc::new(Mutex::new(RelayStats {
             running: true,
             peer_id: Some(peer_id.to_string()),
+            public_ip: None,
             listen_addrs: vec![],
             connected_peers: 0,
             active_reservations: 0,
@@ -91,6 +93,9 @@ impl RelayState {
                 match event {
                     RelayServerEvent::Listening(addr) => {
                         s.listen_addrs.push(addr);
+                    }
+                    RelayServerEvent::PublicIpDetected(ip) => {
+                        s.public_ip = Some(ip);
                     }
                     RelayServerEvent::PeerConnected(_) => {
                         s.connected_peers += 1;

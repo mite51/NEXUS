@@ -277,6 +277,7 @@ export interface RelayInfo {
   stats: {
     running: boolean;
     peer_id: string | null;
+    public_ip: string | null;
     listen_addrs: string[];
     connected_peers: number;
     active_reservations: number;

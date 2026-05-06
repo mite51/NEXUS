@@ -21,6 +21,6 @@ pub use behaviour::NexusBehaviour;
 pub use send_queue::{SendQueue, QueuedSend, SendStatus};
 pub use delivery::{spawn_delivery_worker, DeliveryConfig};
 pub use telemetry::{TelemetryCollector, TelemetryStats, ConnectivityEvent, NatStatus};
-pub use relay_server::{RelayServer, RelayConfig, RelayServerEvent};
+pub use relay_server::{RelayServer, RelayConfig, RelayServerEvent, detect_public_ip};
 pub use libp2p::PeerId;
 pub use libp2p::Multiaddr;

@@ -16,7 +16,6 @@
   import ContactsView from './ContactsView.svelte';
   import SendQueueView from './SendQueueView.svelte';
   import SharedWithMeView from './SharedWithMeView.svelte';
-  import PeersView from './PeersView.svelte';
   import SettingsView from './SettingsView.svelte';
   import LogsView from './LogsView.svelte';
 
@@ -297,7 +296,6 @@
       $currentView === 'shared' ? 'Shared With Me' :
       $currentView === 'outbox' ? 'Outbox' :
       $currentView === 'contacts' ? 'Contacts' :
-      $currentView === 'peers' ? 'Peers' :
       $currentView === 'logs' ? 'Logs' :
       $currentView === 'settings' ? 'Settings' : 'Store'
     }</h2>
@@ -348,8 +346,6 @@
         <SendQueueView />
       {:else if $currentView === 'contacts'}
         <ContactsView />
-      {:else if $currentView === 'peers'}
-        <PeersView {vaultPath} />
       {:else if $currentView === 'settings'}
         <SettingsView />
       {:else if $currentView === 'logs'}

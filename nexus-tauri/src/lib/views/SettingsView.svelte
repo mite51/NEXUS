@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { identity, passphrase, showToast, nodeOnline } from '../stores/app';
   import { theme, toggleTheme } from '../stores/theme';
-  import { getConfig, saveConfig, getConnectivityStats, startRelay, stopRelay, getRelayInfo } from '../ipc';
-  import type { ConnectivityStats, RelayInfo } from '../ipc';
+  import { addLog } from '../stores/logs';
+  import { getConfig, saveConfig, getConnectivityStats, startRelay, stopRelay, getRelayInfo, startNode, stopNode, getNodeInfo } from '../ipc';
+  import type { ConnectivityStats, RelayInfo, NodeInfo } from '../ipc';
 
   let listenPort: string = '';
   let bootstrapPeers: string = '';
@@ -18,6 +19,9 @@
   let relayMaxCircuits: string = '128';
   let relayStarting = false;
   let relayStopping = false;
+  let nodeInfo: NodeInfo = { running: false, peer_id: null, listen_addrs: [], connected_peers: [] };
+  let nodeStarting = false;
+  let refreshTimer: ReturnType<typeof setInterval>;
 
   onMount(async () => {
     try {
@@ -27,9 +31,61 @@
       relayServers = cfg.relay_servers.join('\n');
       telemetryEnabled = cfg.telemetry_enabled ?? true;
     } catch (_) {}
+    await refreshNode();
     await refreshStats();
     await refreshRelay();
+    refreshTimer = setInterval(refreshNode, 3000);
   });
+
+  onDestroy(() => {
+    if (refreshTimer) clearInterval(refreshTimer);
+  });
+
+  async function refreshNode() {
+    try {
+      nodeInfo = await getNodeInfo();
+      nodeOnline.set(nodeInfo.running);
+    } catch (_) {}
+  }
+
+  async function handleStartNode() {
+    if (!$passphrase) {
+      showToast('⚠ Unlock vault first');
+      return;
+    }
+    nodeStarting = true;
+    try {
+      const peerId = await startNode('vault.json', $passphrase);
+      addLog('success', 'Node', `Node started`, `PeerId: ${peerId}`);
+      showToast(`Node started: ${peerId.slice(0, 16)}…`);
+      await refreshNode();
+    } catch (e: any) {
+      let msg = String(e);
+      if (msg.startsWith('Failed to start node: ')) {
+        msg = msg.slice('Failed to start node: '.length);
+      }
+      let detail = msg;
+      if (msg.includes('Address already in use') || msg.includes('AddrInUse') || msg.includes('address already in use') || msg.includes('10048')) {
+        detail = `Port conflict — another process is already using this port. Change the listen port above.`;
+      } else if (!msg || msg === 'Failed to start node') {
+        detail = 'Unknown error — check Logs tab for details';
+      }
+      addLog('error', 'Node', `Failed to start node`, detail);
+      showToast(`Start failed: ${detail}`);
+    }
+    nodeStarting = false;
+  }
+
+  async function handleStopNode() {
+    try {
+      await stopNode();
+      addLog('info', 'Node', 'Node stopped');
+      showToast('Node stopped');
+      await refreshNode();
+    } catch (e: any) {
+      showToast(`Stop failed: ${e}`);
+    }
+  }
 
   async function refreshStats() {
     loadingStats = true;
@@ -162,15 +218,60 @@
 
     <div class="setting-row">
       <div class="setting-info">
-        <div class="setting-label">Node Status</div>
+        <div class="setting-label">Node</div>
         <div class="setting-value">
           <span class="status-dot" class:online={$nodeOnline}></span>
           {$nodeOnline ? 'Online' : 'Offline'}
         </div>
       </div>
+      {#if nodeInfo.running}
+        <button class="stop-btn" on:click={handleStopNode}>Stop Node</button>
+      {:else}
+        <button class="save-btn" on:click={handleStartNode} disabled={nodeStarting}>
+          {nodeStarting ? 'Starting…' : '▶ Start Node'}
+        </button>
+      {/if}
     </div>
 
-    <div class="setting-row">
+    {#if nodeInfo.running && nodeInfo.peer_id}
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">Peer ID</div>
+          <div class="setting-value mono truncated">{nodeInfo.peer_id}</div>
+        </div>
+      </div>
+
+      {#if nodeInfo.listen_addrs.length > 0}
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Listening on</div>
+            {#each nodeInfo.listen_addrs as addr}
+              <div class="setting-value mono" style="font-size: 10px;">{addr}</div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">Connected Peers ({nodeInfo.connected_peers.length})</div>
+        </div>
+      </div>
+      {#if nodeInfo.connected_peers.length > 0}
+        <div class="peers-list">
+          {#each nodeInfo.connected_peers as peer}
+            <div class="peer-chip">
+              <span class="peer-dot"></span>
+              <span class="peer-id-text">{peer.length > 20 ? peer.slice(0, 8) + '…' + peer.slice(-8) : peer}</span>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="muted" style="font-size: 11px; padding: 4px 0;">No peers connected. Peers on the same network appear via mDNS.</div>
+      {/if}
+    {/if}
+
+    <div class="setting-row" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 16px;">
       <div class="setting-info">
         <div class="setting-label">Listen Port</div>
         <div class="setting-desc">Leave empty for random port (default)</div>
@@ -250,6 +351,15 @@
           <span class="health-label">Circuits</span>
         </div>
       </div>
+
+      {#if relayInfo.stats.public_ip}
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Public IP</div>
+            <div class="setting-value mono">{relayInfo.stats.public_ip}</div>
+          </div>
+        </div>
+      {/if}
 
       {#if relayInfo.stats.listen_addrs.length > 0}
         <div class="setting-row">
@@ -491,4 +601,22 @@
     width: 16px; height: 16px; accent-color: var(--accent);
   }
   .toggle-text { font-size: 12px; color: var(--text-secondary); }
+  .peers-list {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 8px 0;
+  }
+  .peer-chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .peer-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+  }
+  .peer-id-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; color: var(--text-secondary);
+  }
 </style>

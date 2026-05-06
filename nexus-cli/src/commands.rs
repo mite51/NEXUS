@@ -1179,8 +1179,11 @@ pub async fn run_relay(
                 RelayServerEvent::CircuitOpened { src, dst } => {
                     println!("  🔗 Circuit opened: {} → {}", &src[..16], &dst[..16]);
                 }
-                RelayServerEvent::CircuitClosed { src, dst } => {
+                                RelayServerEvent::CircuitClosed { src, dst } => {
                     println!("  🔌 Circuit closed: {} → {}", &src[..16], &dst[..16]);
+                }
+                RelayServerEvent::PublicIpDetected(ip) => {
+                    println!("  🌐 Public IP detected: {}", ip);
                 }
             },
             None => break,
