@@ -53,7 +53,23 @@ impl NodeState {
 
         let keypair = identity.to_libp2p_keypair();
         let mut node = NexusNode::start(keypair, config).await
-            .map_err(|e| format!("Failed to start node: {}", e))?;
+            .map_err(|e| {
+                let err_str = e.to_string();
+                let detail = if err_str.contains("Address already in use") || err_str.contains("AddrInUse") || err_str.contains("address already in use") || err_str.contains("10048") {
+                    format!("Port conflict: another process is already using this port. Change listen port in Settings. ({})", err_str)
+                } else if err_str.is_empty() {
+                    "Unknown error (empty). Check that no other node is running and the port is free.".to_string()
+                } else {
+                    err_str
+                };
+                let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                    level: "error".into(),
+                    source: "Node".into(),
+                    message: "Failed to start node".into(),
+                    detail: Some(detail.clone()),
+                });
+                format!("Failed to start node: {}", detail)
+            })?;
 
         let peer_id = node.peer_id;
         let command_tx = node.command_tx.clone();

@@ -35,10 +35,16 @@
       showToast(`Node started: ${peerId.slice(0, 16)}…`);
       await refresh();
     } catch (e: any) {
-      const msg = String(e);
+      let msg = String(e);
+      // Strip Rust-side prefix if present for cleaner display
+      if (msg.startsWith('Failed to start node: ')) {
+        msg = msg.slice('Failed to start node: '.length);
+      }
       let detail = msg;
-      if (msg.includes('Address already in use') || msg.includes('AddrInUse') || msg.includes('address already in use')) {
+      if (msg.includes('Address already in use') || msg.includes('AddrInUse') || msg.includes('address already in use') || msg.includes('10048')) {
         detail = `Port conflict — another process (relay?) is already using this port. Change the listen port in Settings.`;
+      } else if (!msg || msg === 'Failed to start node') {
+        detail = 'Unknown error — check Logs tab for details';
       }
       addLog('error', 'Node', `Failed to start node`, detail);
       showToast(`Start failed: ${detail}`);
