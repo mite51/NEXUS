@@ -142,6 +142,15 @@ impl NodeState {
     }
 }
 
+/// Payload for log events sent to frontend
+#[derive(Debug, Clone, Serialize)]
+struct NodeLogPayload {
+    level: String,
+    source: String,
+    message: String,
+    detail: Option<String>,
+}
+
 /// Payload for file-received event
 #[derive(Debug, Clone, Serialize)]
 struct FileReceivedPayload {
@@ -160,6 +169,75 @@ fn spawn_event_handler(
         let _ = std::fs::create_dir_all(RECEIVED_MANIFESTS_DIR);
 
         while let Some(event) = event_rx.recv().await {
+            // Emit log events for key node events
+            match &event {
+                NodeEvent::PeerDiscovered(peer) => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: "info".into(),
+                        source: "Network".into(),
+                        message: format!("Peer connected: {}", &peer.to_string()[..16]),
+                        detail: Some(peer.to_string()),
+                    });
+                }
+                NodeEvent::PeerDisconnected(peer) => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: "warn".into(),
+                        source: "Network".into(),
+                        message: format!("Peer disconnected: {}", &peer.to_string()[..16]),
+                        detail: Some(peer.to_string()),
+                    });
+                }
+                NodeEvent::Listening(addr) => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: "info".into(),
+                        source: "Network".into(),
+                        message: format!("Listening on {}", addr),
+                        detail: None,
+                    });
+                }
+                NodeEvent::NatStatusChanged { status } => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: "info".into(),
+                        source: "NAT".into(),
+                        message: format!("NAT status: {:?}", status),
+                        detail: None,
+                    });
+                }
+                NodeEvent::RelayReserved { relay_peer, relay_addr } => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: "success".into(),
+                        source: "Relay".into(),
+                        message: format!("Relay reserved via {}", &relay_peer.to_string()[..16]),
+                        detail: Some(relay_addr.to_string()),
+                    });
+                }
+                NodeEvent::HolePunchResult { remote_peer, success } => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: if *success { "success" } else { "warn" }.into(),
+                        source: "DCUtR".into(),
+                        message: format!("Hole punch {}: {}", if *success { "succeeded" } else { "failed" }, &remote_peer.to_string()[..16]),
+                        detail: Some(remote_peer.to_string()),
+                    });
+                }
+                NodeEvent::ShardRequested { peer, cid, .. } => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: "info".into(),
+                        source: "Shard".into(),
+                        message: format!("Shard requested by {}", &peer.to_string()[..16]),
+                        detail: Some(format!("CID: {}", cid)),
+                    });
+                }
+                NodeEvent::ManifestPushed { peer, .. } => {
+                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                        level: "info".into(),
+                        source: "Transfer".into(),
+                        message: format!("Manifest received from {}", &peer.to_string()[..16]),
+                        detail: Some(peer.to_string()),
+                    });
+                }
+                _ => {}
+            }
+
             match event {
                 NodeEvent::ShardPushed { peer: _, cid, data, channel } => {
                     // Store the shard locally

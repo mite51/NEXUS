@@ -3,6 +3,7 @@
   import { startNode, stopNode, getNodeInfo } from '../ipc';
   import type { NodeInfo } from '../ipc';
   import { showToast, passphrase, nodeOnline } from '../stores/app';
+  import { addLog } from '../stores/logs';
 
   export let vaultPath: string;
 
@@ -30,10 +31,17 @@
     starting = true;
     try {
       const peerId = await startNode(vaultPath, $passphrase);
+      addLog('success', 'Node', `Node started`, `PeerId: ${peerId}`);
       showToast(`Node started: ${peerId.slice(0, 16)}…`);
       await refresh();
     } catch (e: any) {
-      showToast(`Start failed: ${e}`);
+      const msg = String(e);
+      let detail = msg;
+      if (msg.includes('Address already in use') || msg.includes('AddrInUse') || msg.includes('address already in use')) {
+        detail = `Port conflict — another process (relay?) is already using this port. Change the listen port in Settings.`;
+      }
+      addLog('error', 'Node', `Failed to start node`, detail);
+      showToast(`Start failed: ${detail}`);
     }
     starting = false;
   }

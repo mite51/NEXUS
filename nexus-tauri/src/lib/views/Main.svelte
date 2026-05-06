@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
+  import { unreadLogCount, addLog, markLogsRead } from '../stores/logs';
   import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile, exportFileBundle, importFileBundle, pickBundleFile } from '../ipc';
   import type { FileEntry, Contact } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -17,6 +18,7 @@
   import SharedWithMeView from './SharedWithMeView.svelte';
   import PeersView from './PeersView.svelte';
   import SettingsView from './SettingsView.svelte';
+  import LogsView from './LogsView.svelte';
 
   export let vaultPath: string;
 
@@ -30,6 +32,7 @@
   let unlistenDrop: (() => void) | null = null;
   let unlistenProgress: (() => void) | null = null;
   let unlistenDecryptProgress: (() => void) | null = null;
+  let unlistenNodeLog: (() => void) | null = null;
   let encryptProgress = 0;
   let decryptProgress = 0;
   let searchQuery = '';
@@ -76,12 +79,18 @@
     unlistenDecryptProgress = await listen<{ current: number; total: number }>('nexus://decrypt-progress', (event) => {
       decryptProgress = event.payload.current / event.payload.total;
     });
+    // Listen for node log events from backend
+    unlistenNodeLog = await listen<{ level: string; source: string; message: string; detail?: string }>('nexus://node-log', (event) => {
+      const { level, source, message, detail } = event.payload;
+      addLog(level as any, source, message, detail ?? undefined);
+    });
   });
 
   onDestroy(() => {
     if (unlistenDrop) unlistenDrop();
     if (unlistenProgress) unlistenProgress();
     if (unlistenDecryptProgress) unlistenDecryptProgress();
+    if (unlistenNodeLog) unlistenNodeLog();
   });
 
   function handleCopyDid() {
@@ -268,7 +277,8 @@
   view={$currentView}
   online={$nodeOnline}
   fileCount={$files.length}
-  on:navigate={(e) => { currentView.set(e.detail); selectedFile = null; }}
+  logCount={$unreadLogCount}
+  on:navigate={(e) => { currentView.set(e.detail); selectedFile = null; if (e.detail === 'logs') markLogsRead(); }}
   on:copyDid={handleCopyDid}
 />
 
@@ -288,6 +298,7 @@
       $currentView === 'outbox' ? 'Outbox' :
       $currentView === 'contacts' ? 'Contacts' :
       $currentView === 'peers' ? 'Peers' :
+      $currentView === 'logs' ? 'Logs' :
       $currentView === 'settings' ? 'Settings' : 'Store'
     }</h2>
     <div class="spacer"></div>
@@ -341,6 +352,8 @@
         <PeersView {vaultPath} />
       {:else if $currentView === 'settings'}
         <SettingsView />
+      {:else if $currentView === 'logs'}
+        <LogsView />
       {:else}
         <StoreView />
       {/if}

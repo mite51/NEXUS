@@ -10,6 +10,8 @@
 
   const dispatch = createEventDispatcher();
 
+  export let logCount: number = 0;
+
   const navItems = [
     { id: 'files', icon: '📁', label: 'My Files' },
     { id: 'shared', icon: '📨', label: 'Shared With Me' },
@@ -17,6 +19,7 @@
     { id: 'contacts', icon: '👤', label: 'Contacts' },
     { id: 'peers', icon: '🌐', label: 'Peers' },
     { id: 'store', icon: '📦', label: 'Store' },
+    { id: 'logs', icon: '📋', label: 'Logs' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
   ];
 
@@ -24,6 +27,7 @@
     if (id === 'files') return fileCount;
     if (id === 'shared') return sharedCount;
     if (id === 'outbox') return outboxCount;
+    if (id === 'logs') return logCount;
     return 0;
   }
 </script>

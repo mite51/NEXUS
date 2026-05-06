@@ -4,7 +4,7 @@ import type { IdentityInfo, FileEntry } from '../ipc';
 export const identity = writable<IdentityInfo | null>(null);
 export const passphrase = writable<string>('');
 export const files = writable<FileEntry[]>([]);
-export const currentView = writable<'files' | 'shared' | 'outbox' | 'contacts' | 'peers' | 'store' | 'settings'>('files');
+export const currentView = writable<'files' | 'shared' | 'outbox' | 'contacts' | 'peers' | 'store' | 'logs' | 'settings'>('files');
 export const nodeOnline = writable<boolean>(false);
 export const toast = writable<string | null>(null);
 
