@@ -96,6 +96,10 @@ pub struct Contact {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pre_public_key_hex: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_addrs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
 }
 
@@ -375,7 +379,7 @@ pub fn list_files() -> Result<Vec<FileEntry>, String> {
 }
 
 #[tauri::command]
-pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, notes: Option<&str>) -> Result<Contact, String> {
+pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, peer_id: Option<&str>, relay_addrs: Option<Vec<String>>, notes: Option<&str>) -> Result<Contact, String> {
     let mut file = load_contacts();
 
     // Check for duplicate DID
@@ -387,6 +391,8 @@ pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, note
         name: name.to_string(),
         did: did.to_string(),
         pre_public_key_hex: pre_public_key_hex.map(|s| s.to_string()),
+        peer_id: peer_id.map(|s| s.to_string()),
+        relay_addrs,
         notes: notes.map(|s| s.to_string()),
     };
 
@@ -413,7 +419,7 @@ pub fn remove_contact(did: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn update_contact(did: &str, name: Option<&str>, pre_public_key_hex: Option<&str>, notes: Option<&str>) -> Result<Contact, String> {
+pub fn update_contact(did: &str, name: Option<&str>, pre_public_key_hex: Option<&str>, peer_id: Option<&str>, relay_addrs: Option<Vec<String>>, notes: Option<&str>) -> Result<Contact, String> {
     let mut file = load_contacts();
     let contact = file.contacts.iter_mut()
         .find(|c| c.did == did)
@@ -421,6 +427,8 @@ pub fn update_contact(did: &str, name: Option<&str>, pre_public_key_hex: Option<
 
     if let Some(n) = name { contact.name = n.to_string(); }
     if let Some(pk) = pre_public_key_hex { contact.pre_public_key_hex = Some(pk.to_string()); }
+    if let Some(p) = peer_id { contact.peer_id = Some(p.to_string()); }
+    if let Some(addrs) = relay_addrs { contact.relay_addrs = Some(addrs); }
     if let Some(n) = notes { contact.notes = Some(n.to_string()); }
 
     let updated = contact.clone();

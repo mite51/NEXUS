@@ -9,6 +9,8 @@
   let newName = '';
   let newDid = '';
   let newPrePk = '';
+  let newPeerId = '';
+  let newRelayAddrs = '';
   let newNotes = '';
   let error = '';
   let confirmDelete: string | null = null;
@@ -25,15 +27,22 @@
       return;
     }
 
+    const relayAddrs = newRelayAddrs.trim()
+      ? newRelayAddrs.split('\n').map(s => s.trim()).filter(Boolean)
+      : undefined;
+
     try {
       const contact = await addContact(
-        newName.trim(), newDid.trim(),
+        newName.trim(),
+        newDid.trim(),
         newPrePk.trim() || undefined,
+        newPeerId.trim() || undefined,
+        relayAddrs,
         newNotes.trim() || undefined
       );
       contacts = [...contacts, contact];
       showAdd = false;
-      newName = ''; newDid = ''; newPrePk = ''; newNotes = '';
+      newName = ''; newDid = ''; newPrePk = ''; newPeerId = ''; newRelayAddrs = ''; newNotes = '';
       showToast(`Added ${contact.name}`);
     } catch (e: any) {
       error = typeof e === 'string' ? e : 'Failed to add contact';
@@ -56,6 +65,11 @@
     navigator.clipboard.writeText(did);
     showToast('DID copied');
   }
+
+  function copyPeerId(peerId: string) {
+    navigator.clipboard.writeText(peerId);
+    showToast('Peer ID copied');
+  }
 </script>
 
 <div class="contacts-view">
@@ -70,9 +84,12 @@
     <div class="add-form">
       <input type="text" placeholder="Name *" bind:value={newName} />
       <input type="text" placeholder="did:nexus:..." bind:value={newDid} />
-      <input type="text" placeholder="PRE public key hex (optional)" bind:value={newPrePk} />
+      <input type="text" placeholder="PRE public key hex (for sharing)" bind:value={newPrePk} />
+      <input type="text" placeholder="Peer ID (12D3Koo...)" bind:value={newPeerId} />
+      <textarea class="relay-input" placeholder="Relay addresses (one per line, optional)"
+                bind:value={newRelayAddrs}></textarea>
       <input type="text" placeholder="Notes (optional)" bind:value={newNotes} />
-      <button class="save-btn" on:click={handleAdd}>Save</button>
+      <button class="save-btn" on:click={handleAdd}>Save Contact</button>
       {#if error}<div class="error">{error}</div>{/if}
     </div>
   {/if}
@@ -92,13 +109,30 @@
           </div>
           <div class="info">
             <div class="name">{contact.name}</div>
-            <button class="did" on:click={() => copyDid(contact.did)} title="Click to copy">
+            <button class="did" on:click={() => copyDid(contact.did)} title="Click to copy DID">
               {contact.did.slice(0, 16)}...{contact.did.slice(-6)}
             </button>
-            {#if contact.pre_public_key_hex}
-              <span class="badge pre">PRE ✓</span>
-            {:else}
-              <span class="badge no-pre">No PRE key</span>
+            <div class="badges">
+              {#if contact.pre_public_key_hex}
+                <span class="badge ok">PRE ✓</span>
+              {:else}
+                <span class="badge warn">No PRE</span>
+              {/if}
+              {#if contact.peer_id}
+                <span class="badge ok">P2P ✓</span>
+              {:else}
+                <span class="badge warn">No Peer</span>
+              {/if}
+            </div>
+            {#if contact.peer_id}
+              <button class="peer-id" on:click={() => copyPeerId(contact.peer_id!)} title="Click to copy Peer ID">
+                🔗 {contact.peer_id.slice(0, 12)}…{contact.peer_id.slice(-6)}
+              </button>
+            {/if}
+            {#if contact.relay_addrs && contact.relay_addrs.length > 0}
+              <div class="relay-info">
+                📡 {contact.relay_addrs.length} relay addr{contact.relay_addrs.length > 1 ? 's' : ''}
+              </div>
             {/if}
             {#if contact.notes}
               <div class="notes">{contact.notes}</div>
@@ -149,6 +183,14 @@
     color: var(--text); font-size: 13px; outline: none;
   }
   .add-form input:focus { border-color: var(--accent); }
+  .relay-input {
+    padding: 8px 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 12px; outline: none;
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 48px; resize: vertical;
+  }
+  .relay-input:focus { border-color: var(--accent); }
   .save-btn {
     padding: 8px; background: var(--accent);
     color: white; border: none; border-radius: 6px;
@@ -184,13 +226,24 @@
     padding: 0; display: block;
   }
   .did:hover { color: var(--accent); }
+  .badges { display: flex; gap: 6px; margin-top: 4px; }
   .badge {
     display: inline-block; font-size: 10px;
     padding: 1px 6px; border-radius: 3px;
-    margin-top: 4px;
   }
-  .badge.pre { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-  .badge.no-pre { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+  .badge.ok { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+  .badge.warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+  .peer-id {
+    font-size: 10px; color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    background: none; border: none; cursor: pointer;
+    padding: 0; margin-top: 3px; display: block;
+  }
+  .peer-id:hover { color: var(--accent); }
+  .relay-info {
+    font-size: 10px; color: var(--text-secondary);
+    margin-top: 2px;
+  }
   .notes {
     font-size: 12px; color: var(--text-secondary);
     margin-top: 4px;

@@ -111,11 +111,13 @@ export interface Contact {
   name: string;
   did: string;
   pre_public_key_hex?: string;
+  peer_id?: string;
+  relay_addrs?: string[];
   notes?: string;
 }
 
-export async function addContact(name: string, did: string, prePublicKeyHex?: string, notes?: string): Promise<Contact> {
-  return invoke('add_contact', { name, did, prePublicKeyHex, notes });
+export async function addContact(name: string, did: string, prePublicKeyHex?: string, peerId?: string, relayAddrs?: string[], notes?: string): Promise<Contact> {
+  return invoke('add_contact', { name, did, prePublicKeyHex, peerId, relayAddrs, notes });
 }
 
 export async function listContacts(): Promise<Contact[]> {
@@ -126,8 +128,8 @@ export async function removeContact(did: string): Promise<void> {
   return invoke('remove_contact', { did });
 }
 
-export async function updateContact(did: string, name?: string, prePublicKeyHex?: string, notes?: string): Promise<Contact> {
-  return invoke('update_contact', { did, name, prePublicKeyHex, notes });
+export async function updateContact(did: string, name?: string, prePublicKeyHex?: string, peerId?: string, relayAddrs?: string[], notes?: string): Promise<Contact> {
+  return invoke('update_contact', { did, name, prePublicKeyHex, peerId, relayAddrs, notes });
 }
 
 export interface ShareResult {
