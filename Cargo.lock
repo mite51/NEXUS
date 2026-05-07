@@ -3606,6 +3606,7 @@ dependencies = [
  "async-trait",
  "ed25519-dalek",
  "futures",
+ "hkdf",
  "libp2p",
  "multihash",
  "rand 0.8.6",

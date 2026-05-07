@@ -387,7 +387,7 @@ pub fn list_files() -> Result<Vec<FileEntry>, String> {
 }
 
 #[tauri::command]
-pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, peer_id: Option<&str>, relay_addrs: Option<Vec<String>>, notes: Option<&str>) -> Result<Contact, String> {
+pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, peer_id: Option<&str>, relay_addrs: Option<Vec<String>>, notes: Option<&str>, vault_path: Option<&str>, passphrase: Option<&str>) -> Result<Contact, String> {
     let mut file = load_contacts();
 
     // Check for duplicate DID
@@ -398,11 +398,18 @@ pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, peer
     // If no PRE public key provided, generate an invite keypair
     let (pre_pk_hex, pre_seed_enc, invite) = if let Some(pk) = pre_public_key_hex {
         (Some(pk.to_string()), None, false)
+    } else if let (Some(vp), Some(pass), Some(pid)) = (vault_path, passphrase, peer_id) {
+        // Deterministic derivation: derive PRE key from vault seed + peer_id
+        let (_id_kp, pre_kp) = load_keys(vp, pass)?;
+        let vault_seed = pre_kp.to_secret_bytes();
+        let derived_kp = PreKeypair::derive_for_peer(&vault_seed, pid);
+        let pk_hex = hex_encode(&derived_kp.public_key().bytes);
+        let seed_hex = hex_encode(&derived_kp.to_secret_bytes());
+        (Some(pk_hex), Some(seed_hex), true)
     } else {
-        // Generate a PRE keypair for the recipient (invite flow)
+        // Random generation fallback (no vault context)
         let invite_kp = PreKeypair::generate();
         let pk_hex = hex_encode(&invite_kp.public_key().bytes);
-        // Store the seed (hex-encoded for now — TODO: encrypt with vault key)
         let seed_hex = hex_encode(&invite_kp.to_secret_bytes());
         (Some(pk_hex), Some(seed_hex), true)
     };
@@ -526,8 +533,9 @@ pub fn accept_join_request(vault_path: &str, passphrase: &str, my_name: &str, re
     let (keypair, pre_kp) = load_keys(vault_path, passphrase)?;
     let my_did = Did::from_public_identity(&keypair.public_identity());
 
-    // Generate a PRE keypair for the requester (so they can receive files from us)
-    let their_kp = PreKeypair::generate();
+    // Deterministically derive a PRE keypair for the requester from our vault seed + their peer_id
+    let vault_seed = pre_kp.to_secret_bytes();
+    let their_kp = PreKeypair::derive_for_peer(&vault_seed, &request.peer_id);
     let their_pre_pk_hex = hex_encode(&their_kp.public_key().bytes);
     let their_seed_hex = hex_encode(&their_kp.to_secret_bytes());
 

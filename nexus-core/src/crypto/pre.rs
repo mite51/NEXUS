@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use hkdf::Hkdf;
+use sha2::Sha256;
 use umbral_pre::{
     self as umbral, Capsule, CapsuleFrag, KeyFrag, SecretKey as UmbralSecretKey,
     Signer as UmbralSigner, VerifiedCapsuleFrag,
@@ -125,6 +127,21 @@ impl PreKeypair {
         let mut seed = [0u8; 32];
         seed.copy_from_slice(bytes);
         Ok(Self::from_seed_internal(&seed))
+    }
+
+    /// Deterministically derive a PRE keypair for a specific peer.
+    ///
+    /// Given the same `vault_seed` (your vault's PRE seed) and `peer_id`,
+    /// this always produces the same keypair. Secure as long as `vault_seed`
+    /// remains secret.
+    ///
+    /// Derivation: HKDF-SHA256(ikm=vault_seed, salt="nexus-pre-peer-v1", info=peer_id)
+    pub fn derive_for_peer(vault_seed: &[u8], peer_id: &str) -> Self {
+        let hk = Hkdf::<Sha256>::new(Some(b"nexus-pre-peer-v1"), vault_seed);
+        let mut derived_seed = [0u8; 32];
+        hk.expand(peer_id.as_bytes(), &mut derived_seed)
+            .expect("32 bytes is valid HKDF output length");
+        Self::from_seed_internal(&derived_seed)
     }
 
     /// Get a reference to the inner umbral secret key
@@ -466,6 +483,60 @@ mod tests {
         let deserialized: EncryptedDek = serde_json::from_str(&json).unwrap();
 
         let recovered = alice.decrypt_dek(&deserialized).unwrap();
+        assert_eq!(dek, recovered);
+    }
+
+    #[test]
+    fn test_derive_for_peer_deterministic() {
+        let vault_seed = b"this-is-a-32-byte-vault-seed!!!!"; // 32 bytes
+        let peer_id = "12D3KooWKLeXas9R5uXZqjrMmHTEs29WRaNyFmXgBWohZsCGfR1J";
+
+        let kp1 = PreKeypair::derive_for_peer(vault_seed, peer_id);
+        let kp2 = PreKeypair::derive_for_peer(vault_seed, peer_id);
+
+        // Same inputs → same keypair
+        assert_eq!(kp1.public_key().bytes, kp2.public_key().bytes);
+        assert_eq!(kp1.to_secret_bytes(), kp2.to_secret_bytes());
+    }
+
+    #[test]
+    fn test_derive_for_peer_different_peers() {
+        let vault_seed = b"this-is-a-32-byte-vault-seed!!!!";
+        let peer_a = "12D3KooWKLeXas9R5uXZqjrMmHTEs29WRaNyFmXgBWohZsCGfR1J";
+        let peer_b = "12D3KooWQnAi3e5PXZqjrMmHTEs29WRaNyFmXgBWohZsCGfABCDE";
+
+        let kp_a = PreKeypair::derive_for_peer(vault_seed, peer_a);
+        let kp_b = PreKeypair::derive_for_peer(vault_seed, peer_b);
+
+        // Different peers → different keypairs
+        assert_ne!(kp_a.public_key().bytes, kp_b.public_key().bytes);
+        assert_ne!(kp_a.to_secret_bytes(), kp_b.to_secret_bytes());
+    }
+
+    #[test]
+    fn test_derive_for_peer_different_vaults() {
+        let vault_a = b"vault-seed-aaaaaaaaaaaaaaaaaaaaaa";
+        let vault_b = b"vault-seed-bbbbbbbbbbbbbbbbbbbbbb";
+        let peer_id = "12D3KooWKLeXas9R5uXZqjrMmHTEs29WRaNyFmXgBWohZsCGfR1J";
+
+        let kp_a = PreKeypair::derive_for_peer(vault_a, peer_id);
+        let kp_b = PreKeypair::derive_for_peer(vault_b, peer_id);
+
+        // Different vault seeds → different keypairs even for same peer
+        assert_ne!(kp_a.public_key().bytes, kp_b.public_key().bytes);
+    }
+
+    #[test]
+    fn test_derive_for_peer_encryption_roundtrip() {
+        let vault_seed = b"this-is-a-32-byte-vault-seed!!!!";
+        let peer_id = "12D3KooWKLeXas9R5uXZqjrMmHTEs29WRaNyFmXgBWohZsCGfR1J";
+
+        let kp = PreKeypair::derive_for_peer(vault_seed, peer_id);
+
+        // Can encrypt/decrypt with a derived keypair
+        let dek: [u8; 32] = [0xAB; 32];
+        let encrypted = kp.encrypt_dek(&dek).unwrap();
+        let recovered = kp.decrypt_dek(&encrypted).unwrap();
         assert_eq!(dek, recovered);
     }
 }

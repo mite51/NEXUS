@@ -118,8 +118,8 @@ export interface Contact {
   notes?: string;
 }
 
-export async function addContact(name: string, did: string, prePublicKeyHex?: string, peerId?: string, relayAddrs?: string[], notes?: string): Promise<Contact> {
-  return invoke('add_contact', { name, did, prePublicKeyHex, peerId, relayAddrs, notes });
+export async function addContact(name: string, did: string, prePublicKeyHex?: string, peerId?: string, relayAddrs?: string[], notes?: string, vaultPath?: string, passphrase?: string): Promise<Contact> {
+  return invoke('add_contact', { name, did, prePublicKeyHex, peerId, relayAddrs, notes, vaultPath, passphrase });
 }
 
 export async function listContacts(): Promise<Contact[]> {
