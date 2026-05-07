@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listContacts, addContact, removeContact, updateContact } from '../ipc';
+  import { listContacts, addContact, removeContact, updateContact, getInviteKey, createJoinRequest, acceptJoinRequest, applyJoinResponse } from '../ipc';
   import type { Contact } from '../ipc';
   import { showToast } from '../stores/app';
+  import { passphrase as passStore } from '../stores/app';
 
   let contacts: Contact[] = [];
   let showAdd = false;
@@ -24,9 +25,71 @@
   let editNotes = '';
   let editError = '';
 
+  // Join request state
+  let showJoin = false;
+  let joinMode: 'create' | 'accept' | 'apply' = 'create';
+  let joinMyName = '';
+  let joinIncludePre = true;
+  let joinOutput = '';
+  let joinInput = '';
+  let joinError = '';
+
+  const vaultPath = 'vault.json';
+
   onMount(async () => {
     try { contacts = await listContacts(); } catch (e) { console.error(e); }
   });
+
+  // --- Join Request Handlers ---
+
+  async function handleCreateJoinRequest() {
+    joinError = ''; joinOutput = '';
+    if (!joinMyName.trim()) { joinError = 'Your display name is required'; return; }
+    try {
+      const json = await createJoinRequest(vaultPath, $passStore, joinMyName.trim(), joinIncludePre);
+      joinOutput = json;
+      showToast('Join request created — copy and send to peer');
+    } catch (e: any) {
+      joinError = typeof e === 'string' ? e : 'Failed to create join request';
+    }
+  }
+
+  async function handleAcceptJoinRequest() {
+    joinError = ''; joinOutput = '';
+    if (!joinMyName.trim()) { joinError = 'Your display name is required'; return; }
+    if (!joinInput.trim()) { joinError = 'Paste the join request JSON'; return; }
+    try {
+      const resultJson = await acceptJoinRequest(vaultPath, $passStore, joinMyName.trim(), joinInput.trim());
+      const result = JSON.parse(resultJson);
+      joinOutput = JSON.stringify(result.response);
+      contacts = await listContacts(); // refresh
+      showToast('Join request accepted — send the response back to them');
+    } catch (e: any) {
+      joinError = typeof e === 'string' ? e : 'Failed to accept join request';
+    }
+  }
+
+  async function handleApplyJoinResponse() {
+    joinError = ''; joinOutput = '';
+    if (!joinInput.trim()) { joinError = 'Paste the join response JSON'; return; }
+    try {
+      const msg = await applyJoinResponse(joinInput.trim());
+      contacts = await listContacts(); // refresh
+      joinInput = '';
+      showToast(msg);
+    } catch (e: any) {
+      joinError = typeof e === 'string' ? e : 'Failed to apply join response';
+    }
+  }
+
+  function copyOutput() {
+    if (joinOutput) {
+      navigator.clipboard.writeText(joinOutput);
+      showToast('Copied to clipboard');
+    }
+  }
+
+  // --- Contact Handlers ---
 
   async function handleAdd() {
     error = '';
@@ -132,10 +195,64 @@
 <div class="contacts-view">
   <div class="header-row">
     <span class="count">{contacts.length} contact{contacts.length !== 1 ? 's' : ''}</span>
-    <button class="add-toggle" on:click={() => showAdd = !showAdd}>
-      {showAdd ? 'Cancel' : '+ Add Contact'}
-    </button>
+    <div class="header-actions">
+      <button class="join-toggle" on:click={() => { showJoin = !showJoin; showAdd = false; }}>
+        {showJoin ? 'Cancel' : '🤝 Join'}
+      </button>
+      <button class="add-toggle" on:click={() => { showAdd = !showAdd; showJoin = false; }}>
+        {showAdd ? 'Cancel' : '+ Add'}
+      </button>
+    </div>
   </div>
+
+  {#if showJoin}
+    <div class="join-panel">
+      <div class="join-tabs">
+        <button class:active={joinMode === 'create'} on:click={() => { joinMode = 'create'; joinOutput = ''; joinError = ''; }}>
+          Create Request
+        </button>
+        <button class:active={joinMode === 'accept'} on:click={() => { joinMode = 'accept'; joinOutput = ''; joinError = ''; }}>
+          Accept Request
+        </button>
+        <button class:active={joinMode === 'apply'} on:click={() => { joinMode = 'apply'; joinOutput = ''; joinError = ''; }}>
+          Apply Response
+        </button>
+      </div>
+
+      {#if joinMode === 'create'}
+        <div class="join-form">
+          <input type="text" placeholder="Your display name" bind:value={joinMyName} />
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={joinIncludePre} />
+            <span>Include my PRE key (let them share files with me immediately)</span>
+          </label>
+          <button class="save-btn" on:click={handleCreateJoinRequest}>Generate Request</button>
+        </div>
+      {:else if joinMode === 'accept'}
+        <div class="join-form">
+          <input type="text" placeholder="Your display name" bind:value={joinMyName} />
+          <textarea class="join-input" placeholder="Paste their join request JSON here..." bind:value={joinInput}></textarea>
+          <button class="save-btn" on:click={handleAcceptJoinRequest}>Accept & Generate Response</button>
+        </div>
+      {:else}
+        <div class="join-form">
+          <textarea class="join-input" placeholder="Paste the join response JSON here..." bind:value={joinInput}></textarea>
+          <button class="save-btn" on:click={handleApplyJoinResponse}>Apply Response</button>
+        </div>
+      {/if}
+
+      {#if joinOutput}
+        <div class="join-output">
+          <div class="output-header">
+            <span>{joinMode === 'create' ? 'Send this to your peer:' : 'Send this response back:'}</span>
+            <button class="copy-btn" on:click={copyOutput}>📋 Copy</button>
+          </div>
+          <pre class="output-text">{joinOutput}</pre>
+        </div>
+      {/if}
+      {#if joinError}<div class="error">{joinError}</div>{/if}
+    </div>
+  {/if}
 
   {#if showAdd}
     <div class="add-form">
@@ -246,13 +363,71 @@
     display: flex; align-items: center; justify-content: space-between;
     margin-bottom: 16px;
   }
+  .header-actions { display: flex; gap: 8px; }
   .count { font-size: 13px; color: var(--text-secondary); }
-  .add-toggle {
+  .add-toggle, .join-toggle {
     background: var(--accent); color: white;
     border: none; padding: 6px 14px; border-radius: 6px;
     font-size: 12px; cursor: pointer;
   }
+  .join-toggle { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .join-toggle:hover { border-color: var(--accent); }
   .add-toggle:hover { opacity: 0.85; }
+  .join-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; margin-bottom: 16px;
+  }
+  .join-tabs {
+    display: flex; gap: 4px; margin-bottom: 12px;
+  }
+  .join-tabs button {
+    flex: 1; padding: 6px 8px; font-size: 11px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer; color: var(--text-secondary);
+  }
+  .join-tabs button.active {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+  .join-form { display: flex; flex-direction: column; gap: 8px; }
+  .join-form input[type="text"] {
+    padding: 8px 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 13px; outline: none;
+  }
+  .join-form input[type="text"]:focus { border-color: var(--accent); }
+  .join-input {
+    padding: 8px 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 11px; outline: none;
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 60px; resize: vertical;
+  }
+  .join-input:focus { border-color: var(--accent); }
+  .checkbox-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-secondary); cursor: pointer;
+  }
+  .join-output {
+    margin-top: 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px;
+  }
+  .output-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px;
+  }
+  .output-header span { font-size: 11px; color: var(--text-secondary); }
+  .copy-btn {
+    background: none; border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 8px; font-size: 11px;
+    cursor: pointer; color: var(--text-secondary);
+  }
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .output-text {
+    font-size: 10px; font-family: 'JetBrains Mono', monospace;
+    color: var(--text); white-space: pre-wrap; word-break: break-all;
+    margin: 0; max-height: 120px; overflow-y: auto;
+  }
   .add-form, .edit-form {
     display: flex; flex-direction: column; gap: 8px;
     padding: 16px; background: var(--surface);

@@ -474,6 +474,144 @@ pub fn get_invite_key(did: &str) -> Result<String, String> {
         .ok_or("No invite seed stored for this contact".into())
 }
 
+// --- Join Request / Response ---
+
+/// A join request: what you send to someone to ask them to add you
+#[derive(Serialize, Deserialize, Clone)]
+pub struct JoinRequest {
+    pub name: String,
+    pub peer_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_public_key_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_addrs: Option<Vec<String>>,
+}
+
+/// A join response: what you send back after accepting a join request
+#[derive(Serialize, Deserialize, Clone)]
+pub struct JoinResponse {
+    pub name: String,
+    pub peer_id: String,
+    pub pre_public_key_hex: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_addrs: Option<Vec<String>>,
+}
+
+/// Generate my join request (to send to someone else)
+#[tauri::command]
+pub fn create_join_request(vault_path: &str, passphrase: &str, name: &str, include_pre: bool) -> Result<String, String> {
+    let (keypair, pre_kp) = load_keys(vault_path, passphrase)?;
+
+    let request = JoinRequest {
+        name: name.to_string(),
+        peer_id: keypair.peer_id().to_string(),
+        pre_public_key_hex: if include_pre {
+            Some(hex_encode(&pre_kp.public_key().bytes))
+        } else {
+            None
+        },
+        relay_addrs: None, // TODO: pull from config if available
+    };
+
+    serde_json::to_string(&request)
+        .map_err(|e| format!("Serialization failed: {}", e))
+}
+
+/// Accept an incoming join request — adds them as contact, returns a join response
+#[tauri::command]
+pub fn accept_join_request(vault_path: &str, passphrase: &str, my_name: &str, request_json: &str) -> Result<String, String> {
+    let request: JoinRequest = serde_json::from_str(request_json)
+        .map_err(|e| format!("Invalid join request: {}", e))?;
+
+    let (keypair, pre_kp) = load_keys(vault_path, passphrase)?;
+    let my_did = Did::from_public_identity(&keypair.public_identity());
+
+    // Generate a PRE keypair for the requester (so they can receive files from us)
+    let their_kp = PreKeypair::generate();
+    let their_pre_pk_hex = hex_encode(&their_kp.public_key().bytes);
+    let their_seed_hex = hex_encode(&their_kp.to_secret_bytes());
+
+    // Determine their DID placeholder
+    let their_did = format!("did:nexus:peer-{}", &request.peer_id[..16.min(request.peer_id.len())]);
+
+    // Add them as a contact
+    let mut file = load_contacts();
+    if !file.contacts.iter().any(|c| c.peer_id.as_deref() == Some(&request.peer_id)) {
+        let contact = Contact {
+            name: request.name.clone(),
+            did: their_did,
+            pre_public_key_hex: request.pre_public_key_hex.clone(),
+            pre_seed_encrypted: if request.pre_public_key_hex.is_none() {
+                None // They didn't provide a key, we can't share with them yet
+            } else {
+                None
+            },
+            invite_pending: request.pre_public_key_hex.is_none(),
+            peer_id: Some(request.peer_id.clone()),
+            relay_addrs: request.relay_addrs.clone(),
+            notes: Some("Added via join request".to_string()),
+        };
+        file.contacts.push(contact);
+        save_contacts(&file)?;
+    }
+
+    // Build join response with the PRE we generated for them
+    let response = JoinResponse {
+        name: my_name.to_string(),
+        peer_id: keypair.peer_id().to_string(),
+        pre_public_key_hex: their_pre_pk_hex,
+        relay_addrs: None, // TODO: pull from config
+    };
+
+    // Also return the seed so UI can show/store it
+    // We embed it in a wrapper for the frontend
+    let result = serde_json::json!({
+        "response": response,
+        "invite_seed_hex": their_seed_hex,
+    });
+
+    serde_json::to_string(&result)
+        .map_err(|e| format!("Serialization failed: {}", e))
+}
+
+/// Apply a join response — updates the contact that sent us a response
+#[tauri::command]
+pub fn apply_join_response(response_json: &str) -> Result<String, String> {
+    let response: JoinResponse = serde_json::from_str(response_json)
+        .map_err(|e| format!("Invalid join response: {}", e))?;
+
+    let mut file = load_contacts();
+
+    // Find contact by peer_id or add new
+    let contact = file.contacts.iter_mut()
+        .find(|c| c.peer_id.as_deref() == Some(&response.peer_id));
+
+    if let Some(contact) = contact {
+        // Update existing contact with their PRE key
+        contact.pre_public_key_hex = Some(response.pre_public_key_hex.clone());
+        contact.name = response.name.clone();
+        if let Some(addrs) = &response.relay_addrs {
+            contact.relay_addrs = Some(addrs.clone());
+        }
+    } else {
+        // New contact from response
+        let new_contact = Contact {
+            name: response.name.clone(),
+            did: format!("did:nexus:peer-{}", &response.peer_id[..16.min(response.peer_id.len())]),
+            pre_public_key_hex: Some(response.pre_public_key_hex.clone()),
+            pre_seed_encrypted: None,
+            invite_pending: false,
+            peer_id: Some(response.peer_id.clone()),
+            relay_addrs: response.relay_addrs.clone(),
+            notes: Some("Added via join response".to_string()),
+        };
+        file.contacts.push(new_contact);
+    }
+
+    save_contacts(&file)?;
+    Ok(format!("Contact '{}' updated with PRE key", response.name))
+}
+
 #[tauri::command]
 pub fn share_file(
     manifest_path: &str,

@@ -134,6 +134,18 @@ export async function getInviteKey(did: string): Promise<string> {
   return invoke('get_invite_key', { did });
 }
 
+export async function createJoinRequest(vaultPath: string, passphrase: string, name: string, includePre: boolean): Promise<string> {
+  return invoke('create_join_request', { vaultPath, passphrase, name, includePre });
+}
+
+export async function acceptJoinRequest(vaultPath: string, passphrase: string, myName: string, requestJson: string): Promise<string> {
+  return invoke('accept_join_request', { vaultPath, passphrase, myName, requestJson });
+}
+
+export async function applyJoinResponse(responseJson: string): Promise<string> {
+  return invoke('apply_join_response', { responseJson });
+}
+
 export async function updateContact(did: string, name?: string, prePublicKeyHex?: string, peerId?: string, relayAddrs?: string[], notes?: string): Promise<Contact> {
   return invoke('update_contact', { did, name, prePublicKeyHex, peerId, relayAddrs, notes });
 }
