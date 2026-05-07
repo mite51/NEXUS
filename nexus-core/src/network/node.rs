@@ -114,6 +114,14 @@ pub enum NodeEvent {
         remote_peer: PeerId,
         success: bool,
     },
+    /// A peer requested to pull an asset
+    PullAssetRequested {
+        peer: PeerId,
+        asset_id: String,
+        requester_did: String,
+        signature: Vec<u8>,
+        channel: request_response::ResponseChannel<NexusResponse>,
+    },
 }
 
 /// Commands that can be sent to the node
@@ -492,6 +500,15 @@ async fn handle_swarm_event(
                                 peer,
                                 manifest_json,
                                 share_grant_json,
+                                channel,
+                            }).await;
+                        }
+                        NexusRequest::PullAsset { asset_id, requester_did, signature } => {
+                            let _ = event_tx.send(NodeEvent::PullAssetRequested {
+                                peer,
+                                asset_id,
+                                requester_did,
+                                signature,
                                 channel,
                             }).await;
                         }

@@ -1192,3 +1192,171 @@ pub async fn run_relay(
 
     Ok(())
 }
+
+// --- Contacts & Join ---
+
+const CONTACTS_PATH: &str = ".nexus-contacts.json";
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Contact {
+    pub name: String,
+    pub did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_public_key_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_seed_encrypted: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub invite_pending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_addrs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+fn is_false(b: &bool) -> bool { !*b }
+
+#[derive(Serialize, Deserialize)]
+struct ContactsFile {
+    contacts: Vec<Contact>,
+}
+
+fn load_contacts() -> ContactsFile {
+    fs::read_to_string(CONTACTS_PATH)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(ContactsFile { contacts: vec![] })
+}
+
+fn save_contacts(file: &ContactsFile) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(file)
+        .map_err(|e| format!("Serialize error: {}", e))?;
+    fs::write(CONTACTS_PATH, json)
+        .map_err(|e| format!("Write error: {}", e))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct JoinRequest {
+    pub name: String,
+    pub peer_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_public_key_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_addrs: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct JoinResponse {
+    pub name: String,
+    pub peer_id: String,
+    pub pre_public_key_hex: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_addrs: Option<Vec<String>>,
+}
+
+pub fn create_join_request(vault_path: &str, name: &str, include_pre: bool) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Passphrase: ")?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    let request = JoinRequest {
+        name: name.to_string(),
+        peer_id: keypair.peer_id().to_string(),
+        pre_public_key_hex: if include_pre {
+            Some(hex_encode(&pre_kp.public_key().bytes))
+        } else {
+            None
+        },
+        relay_addrs: None,
+    };
+
+    let json = serde_json::to_string(&request)
+        .map_err(|e| format!("Serialize error: {}", e))?;
+    println!("{}", json);
+    Ok(())
+}
+
+pub fn accept_join_request(vault_path: &str, my_name: &str, request_json: &str) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Passphrase: ")?;
+    let request: JoinRequest = serde_json::from_str(request_json)
+        .map_err(|e| format!("Invalid join request: {}", e))?;
+
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    // Deterministically derive a PRE keypair for the requester
+    let vault_seed = pre_kp.to_secret_bytes();
+    let their_kp = PreKeypair::derive_for_peer(&vault_seed, &request.peer_id);
+    let their_pre_pk_hex = hex_encode(&their_kp.public_key().bytes);
+    let their_seed_hex = hex_encode(&their_kp.to_secret_bytes());
+
+    // Add them as a contact
+    let their_did = format!("did:nexus:peer-{}", &request.peer_id[..16.min(request.peer_id.len())]);
+    let mut file = load_contacts();
+    if !file.contacts.iter().any(|c| c.peer_id.as_deref() == Some(&request.peer_id)) {
+        let contact = Contact {
+            name: request.name.clone(),
+            did: their_did,
+            pre_public_key_hex: request.pre_public_key_hex.clone(),
+            pre_seed_encrypted: Some(their_seed_hex),
+            invite_pending: request.pre_public_key_hex.is_none(),
+            peer_id: Some(request.peer_id.clone()),
+            relay_addrs: request.relay_addrs.clone(),
+            notes: Some("Added via join request".to_string()),
+        };
+        file.contacts.push(contact);
+        save_contacts(&file)?;
+        eprintln!("✓ Added contact: {}", request.name);
+    } else {
+        eprintln!("Contact with peer_id {} already exists", request.peer_id);
+    }
+
+    // Build response
+    let response = JoinResponse {
+        name: my_name.to_string(),
+        peer_id: keypair.peer_id().to_string(),
+        pre_public_key_hex: their_pre_pk_hex,
+        relay_addrs: None,
+    };
+
+    let json = serde_json::to_string(&response)
+        .map_err(|e| format!("Serialize error: {}", e))?;
+    println!("{}", json);
+    eprintln!("✓ Send the above JSON back to {}", request.name);
+    Ok(())
+}
+
+pub fn apply_join_response(response_json: &str) -> Result<(), String> {
+    let response: JoinResponse = serde_json::from_str(response_json)
+        .map_err(|e| format!("Invalid join response: {}", e))?;
+
+    let mut file = load_contacts();
+    let contact = file.contacts.iter_mut()
+        .find(|c| c.peer_id.as_deref() == Some(&response.peer_id));
+
+    if let Some(contact) = contact {
+        contact.pre_public_key_hex = Some(response.pre_public_key_hex.clone());
+        contact.name = response.name.clone();
+        contact.invite_pending = false;
+        if let Some(addrs) = &response.relay_addrs {
+            contact.relay_addrs = Some(addrs.clone());
+        }
+        save_contacts(&file)?;
+        eprintln!("✓ Updated contact: {} — PRE key received, can now share files", response.name);
+    } else {
+        // Add as new contact
+        let contact = Contact {
+            name: response.name.clone(),
+            did: format!("did:nexus:peer-{}", &response.peer_id[..16.min(response.peer_id.len())]),
+            pre_public_key_hex: Some(response.pre_public_key_hex.clone()),
+            pre_seed_encrypted: None,
+            invite_pending: false,
+            peer_id: Some(response.peer_id.clone()),
+            relay_addrs: response.relay_addrs.clone(),
+            notes: Some("Added via join response".to_string()),
+        };
+        file.contacts.push(contact);
+        save_contacts(&file)?;
+        eprintln!("✓ Added new contact: {} — PRE key received", response.name);
+    }
+    Ok(())
+}

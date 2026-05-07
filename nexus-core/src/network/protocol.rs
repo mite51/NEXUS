@@ -8,19 +8,26 @@ use serde::{Deserialize, Serialize};
 pub enum NexusRequest {
     /// Request a shard by its CID (hex-encoded)
     GetShard { cid: String },
-    /// Push a shard to a peer (sender-initiated transfer)
+    /// Push a shard to a peer (sender-initiated transfer) [DEPRECATED]
     PushShard { cid: String, data: Vec<u8> },
-    /// Push a manifest + optional share grant to a peer
+    /// Push a manifest + optional share grant to a peer [DEPRECATED]
     PushManifest {
         manifest_json: String,
         share_grant_json: Option<String>,
     },
-    /// Deliver kfrags to a recipient
+    /// Deliver kfrags to a recipient [DEPRECATED]
     DeliverKfrags {
         manifest_id: String,
         kfrags: Vec<Vec<u8>>,
         verifying_key: Vec<u8>,
         sender_pre_pk: Vec<u8>,
+    },
+    /// Pull an asset: request manifest + rfrag + shards
+    PullAsset {
+        asset_id: String,
+        requester_did: String,
+        /// Signature of asset_id bytes by requester's identity key (proves DID ownership)
+        signature: Vec<u8>,
     },
     /// Ping (health check)
     Ping,
@@ -38,6 +45,18 @@ pub enum NexusResponse {
     ManifestAccepted,
     /// kfrag delivery acknowledged
     KfragsReceived { manifest_id: String },
+    /// Asset pull response: rfrag + manifest + shards bundled
+    Asset {
+        asset_id: String,
+        /// The rfrag for the requester
+        rfrag: Vec<u8>,
+        /// Encrypted manifest bytes
+        manifest: Vec<u8>,
+        /// Shard data (ordered per manifest)
+        shards: Vec<Vec<u8>>,
+    },
+    /// Asset not found or unauthorized
+    AssetDenied { asset_id: String, reason: String },
     /// Pong (health check response)
     Pong,
     /// Error

@@ -7,8 +7,10 @@ pub mod shard;
 pub mod store;
 pub mod net_store;
 pub mod received;
+pub mod asset_store;
 
 pub use shard::{Shard, ShardManifest, shard_data, reassemble, compute_cid, DEFAULT_SHARD_SIZE};
 pub use store::{ShardStore, StoreStats};
 pub use net_store::{NetworkStore, FetchResult};
 pub use received::{ReceivedFiles, ReceivedFile};
+pub use asset_store::{AssetStore, AssetInfo};

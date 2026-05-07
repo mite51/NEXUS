@@ -153,6 +153,34 @@ enum Commands {
         #[command(subcommand)]
         action: StoreAction,
     },
+    /// Create a join request to exchange contacts
+    CreateJoinRequest {
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+        /// Your display name
+        #[arg(long)]
+        name: String,
+        /// Include your PRE public key in the request
+        #[arg(long, default_value_t = true)]
+        include_pre: bool,
+    },
+    /// Accept an incoming join request and output a response
+    AcceptJoinRequest {
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+        /// Your display name
+        #[arg(long)]
+        name: String,
+        /// The join request JSON string
+        #[arg(long)]
+        request: String,
+    },
+    /// Apply a join response to complete the handshake
+    ApplyJoinResponse {
+        /// The join response JSON string
+        #[arg(long)]
+        response: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -231,6 +259,15 @@ fn main() {
             StoreAction::Import { manifest, from, dir } => commands::store_import(&manifest, &from, &dir),
             StoreAction::Verify { dir } => commands::store_verify(&dir),
         },
+        Commands::CreateJoinRequest { vault, name, include_pre } => {
+            commands::create_join_request(&vault, &name, include_pre)
+        }
+        Commands::AcceptJoinRequest { vault, name, request } => {
+            commands::accept_join_request(&vault, &name, &request)
+        }
+        Commands::ApplyJoinResponse { response } => {
+            commands::apply_join_response(&response)
+        }
     };
 
     if let Err(e) = result {
