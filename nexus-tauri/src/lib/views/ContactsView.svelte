@@ -296,59 +296,43 @@
               {#if editError}<div class="error">{editError}</div>{/if}
             </div>
           {:else}
-            <!-- Display mode -->
-            <div class="avatar">
-              {contact.name.charAt(0).toUpperCase()}
-            </div>
-            <div class="info">
-              <div class="name">{contact.name}</div>
-              <button class="did" on:click={() => copyDid(contact.did)} title="Click to copy DID">
-                {contact.did.slice(0, 16)}...{contact.did.slice(-6)}
-              </button>
+            <!-- Display mode: single compact row -->
+            <div class="contact-row">
+              <div class="avatar-sm">
+                {contact.name.charAt(0).toUpperCase()}
+              </div>
+              <span class="name">{contact.name}</span>
               <div class="badges">
                 {#if contact.invite_pending}
-                  <span class="badge invite">📨 Invite</span>
+                  <span class="badge invite">📨</span>
                 {:else if contact.pre_public_key_hex}
-                  <span class="badge ok">PRE ✓</span>
+                  <span class="badge ok">PRE</span>
                 {:else}
-                  <span class="badge warn">No PRE</span>
+                  <span class="badge warn">!PRE</span>
                 {/if}
                 {#if contact.peer_id}
-                  <span class="badge ok">P2P ✓</span>
+                  <span class="badge ok">P2P</span>
                 {:else}
-                  <span class="badge warn">No Peer</span>
+                  <span class="badge warn">!P2P</span>
                 {/if}
               </div>
               {#if contact.peer_id}
-                <button class="peer-id" on:click={() => copyPeerId(contact.peer_id!)} title="Click to copy Peer ID">
-                  🔗 {contact.peer_id.slice(0, 12)}…{contact.peer_id.slice(-6)}
+                <button class="peer-id" on:click={() => copyPeerId(contact.peer_id!)} title="Copy Peer ID">
+                  {contact.peer_id.slice(0, 8)}…{contact.peer_id.slice(-4)}
                 </button>
-              {/if}
-              {#if contact.relay_addrs && contact.relay_addrs.length > 0}
-                <div class="relay-info">
-                  📡 {contact.relay_addrs.length} relay addr{contact.relay_addrs.length > 1 ? 's' : ''}
-                </div>
               {/if}
               {#if contact.notes}
-                <div class="notes">{contact.notes}</div>
+                <span class="notes-inline">{contact.notes}</span>
               {/if}
-            </div>
-            <div class="actions">
-              <button class="edit-btn" on:click={() => startEdit(contact)} title="Edit">
-                ✏️
-              </button>
-              {#if confirmDelete === contact.did}
-                <button class="delete-confirm" on:click={() => handleDelete(contact.did)}>
-                  Confirm
-                </button>
-                <button class="delete-cancel" on:click={() => confirmDelete = null}>
-                  ✕
-                </button>
-              {:else}
-                <button class="delete-btn" on:click={() => confirmDelete = contact.did}>
-                  🗑
-                </button>
-              {/if}
+              <div class="row-actions">
+                <button class="icon-btn" on:click={() => startEdit(contact)} title="Edit">✏️</button>
+                {#if confirmDelete === contact.did}
+                  <button class="delete-confirm" on:click={() => handleDelete(contact.did)}>Yes</button>
+                  <button class="icon-btn" on:click={() => confirmDelete = null}>✕</button>
+                {:else}
+                  <button class="icon-btn" on:click={() => confirmDelete = contact.did} title="Delete">🗑</button>
+                {/if}
+              </div>
             </div>
           {/if}
         </div>
@@ -485,33 +469,29 @@
     flex: 1; overflow-y: auto;
   }
   .contact-card {
-    display: flex; align-items: flex-start; gap: 12px;
-    padding: 14px 16px;
+    display: flex; align-items: center;
+    padding: 8px 12px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     transition: border-color 0.15s;
   }
   .contact-card:hover { border-color: var(--accent); }
-  .avatar {
-    width: 40px; height: 40px; border-radius: 50%;
+  .contact-row {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; min-width: 0;
+  }
+  .avatar-sm {
+    width: 28px; height: 28px; border-radius: 50%;
     background: var(--accent); color: white;
     display: flex; align-items: center; justify-content: center;
-    font-weight: 600; font-size: 16px; flex-shrink: 0;
+    font-weight: 600; font-size: 12px; flex-shrink: 0;
   }
-  .info { flex: 1; min-width: 0; }
-  .name { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
-  .did {
-    font-size: 11px; color: var(--text-secondary);
-    font-family: 'JetBrains Mono', monospace;
-    background: none; border: none; cursor: pointer;
-    padding: 0; display: block;
-  }
-  .did:hover { color: var(--accent); }
-  .badges { display: flex; gap: 6px; margin-top: 4px; }
+  .name { font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .badges { display: flex; gap: 4px; flex-shrink: 0; }
   .badge {
-    display: inline-block; font-size: 10px;
-    padding: 1px 6px; border-radius: 3px;
+    display: inline-block; font-size: 9px;
+    padding: 1px 5px; border-radius: 3px;
   }
   .badge.ok { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
   .badge.warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
@@ -521,36 +501,25 @@
     font-size: 10px; color: var(--text-secondary);
     font-family: 'JetBrains Mono', monospace;
     background: none; border: none; cursor: pointer;
-    padding: 0; margin-top: 3px; display: block;
+    padding: 0; white-space: nowrap;
   }
   .peer-id:hover { color: var(--accent); }
-  .relay-info {
-    font-size: 10px; color: var(--text-secondary);
-    margin-top: 2px;
+  .notes-inline {
+    font-size: 11px; color: var(--text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 120px;
   }
-  .notes {
-    font-size: 12px; color: var(--text-secondary);
-    margin-top: 4px;
-  }
-  .actions { flex-shrink: 0; display: flex; gap: 4px; align-items: flex-start; }
-  .edit-btn {
+  .row-actions { display: flex; gap: 2px; align-items: center; margin-left: auto; flex-shrink: 0; }
+  .icon-btn {
     background: none; border: none; cursor: pointer;
-    font-size: 14px; opacity: 0.4; transition: opacity 0.15s;
+    font-size: 13px; opacity: 0.4; transition: opacity 0.15s;
+    padding: 2px 4px;
   }
-  .edit-btn:hover { opacity: 1; }
-  .delete-btn {
-    background: none; border: none; cursor: pointer;
-    font-size: 14px; opacity: 0.4; transition: opacity 0.15s;
-  }
-  .delete-btn:hover { opacity: 1; }
+  .icon-btn:hover { opacity: 1; }
   .delete-confirm {
     background: var(--error); color: white;
-    border: none; padding: 4px 10px; border-radius: 4px;
-    font-size: 11px; cursor: pointer;
-  }
-  .delete-cancel {
-    background: none; border: none;
-    color: var(--text-secondary); cursor: pointer; font-size: 14px;
+    border: none; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; cursor: pointer;
   }
   .empty {
     display: flex; flex-direction: column;
