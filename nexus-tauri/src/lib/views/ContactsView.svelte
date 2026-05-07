@@ -512,7 +512,7 @@
   .row-actions { display: flex; gap: 2px; align-items: center; margin-left: auto; flex-shrink: 0; }
   .icon-btn {
     background: none; border: none; cursor: pointer;
-    font-size: 13px; opacity: 0.4; transition: opacity 0.15s;
+    font-size: 13px; opacity: 0.6; transition: opacity 0.15s;
     padding: 2px 4px;
   }
   .icon-btn:hover { opacity: 1; }
