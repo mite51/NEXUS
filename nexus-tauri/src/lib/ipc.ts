@@ -229,6 +229,7 @@ export interface AppConfig {
   relay_servers: string[];
   telemetry_enabled: boolean;
   auto_start_node: boolean;
+  auto_start_relay: boolean;
 }
 
 export interface ConnectivityStats {

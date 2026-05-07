@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { identity, toast as toastStore, showToast, passphrase as passStore } from './lib/stores/app';
   import { theme } from './lib/stores/theme';
-  import { getIdentity, getConfig, startNode } from './lib/ipc';
+  import { getIdentity, getConfig, startNode, startRelay } from './lib/ipc';
   import { initNotifications, notifyFileReceived } from './lib/notifications';
   import { listen } from '@tauri-apps/api/event';
   import Setup from './lib/views/Setup.svelte';
@@ -46,6 +46,10 @@
       if (cfg.auto_start_node) {
         const peerId = await startNode(VAULT_PATH, $passStore);
         showToast(`Node auto-started: ${peerId.slice(0, 16)}…`);
+      }
+      if (cfg.auto_start_relay) {
+        const peerId = await startRelay(VAULT_PATH, $passStore, 4002, 128, 4);
+        showToast(`Relay auto-started: ${peerId.slice(0, 16)}…`);
       }
     } catch (_) {
       // Silently fail — user can start manually from Settings
