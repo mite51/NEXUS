@@ -5,7 +5,6 @@ use tauri::{AppHandle, Emitter};
 
 use nexus_core::identity::IdentityKeypair;
 use nexus_core::network::{NexusNode, NodeConfig, NodeCommand, NodeEvent, PeerId};
-use nexus_core::network::{spawn_delivery_worker, DeliveryConfig};
 use nexus_core::storage::ReceivedFiles;
 
 const RECEIVED_FILES_PATH: &str = ".nexus-received.json";
@@ -24,7 +23,6 @@ struct NodeInner {
 struct NodeHandle {
     peer_id: PeerId,
     command_tx: mpsc::Sender<NodeCommand>,
-    delivery_handle: tokio::task::JoinHandle<()>,
     event_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -74,13 +72,6 @@ impl NodeState {
         let peer_id = node.peer_id;
         let command_tx = node.command_tx.clone();
 
-        // Start delivery worker
-        let delivery_config = DeliveryConfig::default();
-        let delivery_handle = spawn_delivery_worker(
-            command_tx.clone(),
-            delivery_config,
-        );
-
         // Take event_rx and spawn event handler
         let event_rx = std::mem::replace(&mut node.event_rx, {
             let (_, rx) = mpsc::channel(1);
@@ -91,7 +82,6 @@ impl NodeState {
         inner.node = Some(NodeHandle {
             peer_id,
             command_tx: node.command_tx,
-            delivery_handle,
             event_handle,
         });
 
@@ -102,7 +92,6 @@ impl NodeState {
         let mut inner = self.inner.lock().await;
 
         if let Some(handle) = inner.node.take() {
-            handle.delivery_handle.abort();
             handle.event_handle.abort();
             handle.command_tx.send(NodeCommand::Shutdown).await
                 .map_err(|e| format!("Shutdown failed: {}", e))?;
@@ -319,6 +308,77 @@ fn spawn_event_handler(
                             .unwrap_or_else(|| "file".into()),
                         from: peer.to_string(),
                     });
+                }
+                NodeEvent::PullAssetRequested { peer, asset_id, requester_did, signature: _, channel } => {
+                    // Serve asset if rfrag exists for requester
+                    let store = nexus_core::storage::AssetStore::open(".nexus-store").ok();
+                    let response = if let Some(store) = store {
+                        if let Ok(Some(rfrag)) = store.get_rfrag(&asset_id, &requester_did) {
+                            // Get manifest + shards
+                            match store.get_manifest(&asset_id) {
+                                Ok(Some(manifest_bytes)) => {
+                                    // Load shards from manifest
+                                    let shard_store = nexus_core::storage::ShardStore::open(".nexus-store/shards").ok();
+                                    let mut shard_data = Vec::new();
+                                    let mut shards_ok = true;
+                                    if let Ok(manifest) = serde_json::from_slice::<nexus_core::manifest::NexusManifest>(&manifest_bytes) {
+                                        for cid in &manifest.shards.shards {
+                                            if let Some(ref ss) = shard_store {
+                                                if let Ok(Some(shard)) = ss.get(cid) {
+                                                    shard_data.push(shard.data);
+                                                } else {
+                                                    shards_ok = false;
+                                                    break;
+                                                }
+                                            } else {
+                                                shards_ok = false;
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        shards_ok = false;
+                                    }
+                                    if shards_ok {
+                                        let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                            level: "info".into(),
+                                            source: "Pull".into(),
+                                            message: format!("Serving asset to {}", &peer.to_string()[..16]),
+                                            detail: Some(format!("asset: {}, did: {}", &asset_id[..16], requester_did)),
+                                        });
+                                        nexus_core::network::protocol::NexusResponse::Asset {
+                                            asset_id,
+                                            rfrag,
+                                            manifest: manifest_bytes,
+                                            shards: shard_data,
+                                        }
+                                    } else {
+                                        nexus_core::network::protocol::NexusResponse::AssetDenied {
+                                            asset_id,
+                                            reason: "Shards not available".into(),
+                                        }
+                                    }
+                                }
+                                _ => nexus_core::network::protocol::NexusResponse::AssetDenied {
+                                    asset_id,
+                                    reason: "Manifest not found".into(),
+                                },
+                            }
+                        } else {
+                            nexus_core::network::protocol::NexusResponse::AssetDenied {
+                                asset_id,
+                                reason: "Unauthorized".into(),
+                            }
+                        }
+                    } else {
+                        nexus_core::network::protocol::NexusResponse::AssetDenied {
+                            asset_id,
+                            reason: "Store unavailable".into(),
+                        }
+                    };
+                    let _ = command_tx.send(nexus_core::network::NodeCommand::RespondShard {
+                        channel,
+                        response,
+                    }).await;
                 }
                 // Other events we don't handle yet
                 _ => {}

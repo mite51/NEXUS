@@ -8,10 +8,10 @@ use nexus_core::identity::{IdentityKeypair, IdentityVault, Did};
 use nexus_core::crypto::pre::{PreKeypair, PreSigner, PrePublicKey, reencrypt};
 use nexus_core::crypto::{encrypt_data, decrypt_data, generate_dek};
 use nexus_core::manifest::{NexusManifest, ShareGrant};
-use nexus_core::storage::{shard_data, reassemble, ShardStore, DEFAULT_SHARD_SIZE};
+use nexus_core::storage::{shard_data, reassemble, ShardStore, AssetStore, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::shard::Shard;
 use nexus_core::storage::{ReceivedFiles, ReceivedFile};
-use nexus_core::network::{SendQueue, QueuedSend, SendStatus, NodeConfig};
+use nexus_core::network::NodeConfig;
 
 use crate::node_state::{NodeState, NodeInfo};
 use crate::relay_state::{RelayState, RelayInfo};
@@ -631,10 +631,13 @@ pub fn share_file(
     let (_keypair, pre_kp) = load_keys(vault_path, passphrase)?;
 
     // Load manifest
-    let manifest_json = fs::read_to_string(manifest_path)
+    let manifest_bytes = fs::read(manifest_path)
         .map_err(|e| format!("Failed to read manifest: {}", e))?;
-    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
+    let manifest: NexusManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    // Compute asset ID from manifest content
+    let asset_id = AssetStore::compute_asset_id(&manifest_bytes);
 
     // Parse recipient's PRE public key
     let recipient_pk_bytes = hex_decode(recipient_pre_pk_hex)?;
@@ -655,7 +658,7 @@ pub fn share_file(
         .collect();
     let cfrags = cfrags.map_err(|e| format!("Re-encryption failed: {}", e))?;
 
-    // Build share grant
+    // Build share grant (rfrag)
     let grant = ShareGrant {
         recipient: recipient_did.to_string(),
         recipient_pre_pk: recipient_pk,
@@ -664,18 +667,21 @@ pub fn share_file(
         manifest_ref: manifest_path.to_string(),
     };
 
-    // Write grant file
-    let filename = Path::new(manifest_path)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "file".into());
-    let short_did = &recipient_did[recipient_did.len().saturating_sub(8)..];
-    let grant_path = format!("{}.share-{}.json", filename, short_did);
-
-    let grant_json = serde_json::to_string_pretty(&grant)
+    // Serialize the grant as the rfrag
+    let rfrag_bytes = serde_json::to_vec(&grant)
         .map_err(|e| format!("Serialization failed: {}", e))?;
-    fs::write(&grant_path, &grant_json)
-        .map_err(|e| format!("Failed to write grant: {}", e))?;
+
+    // Store rfrag in the asset store
+    let store = AssetStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open asset store: {}", e))?;
+
+    // Also store the manifest in the asset store (idempotent)
+    store.put_manifest(&manifest_bytes)?;
+
+    // Write rfrag
+    store.put_rfrag(&asset_id, recipient_did, &rfrag_bytes)?;
+
+    let grant_path = format!(".nexus-store/rfrags/{}/{}", asset_id, recipient_did.replace(':', "_"));
 
     Ok(ShareResult {
         grant_path,
@@ -684,86 +690,57 @@ pub fn share_file(
     })
 }
 
-const SEND_QUEUE_PATH: &str = ".nexus-send-queue.json";
+// --- Share management (pull-only model) ---
 
 #[derive(Serialize)]
-pub struct QueuedSendInfo {
-    pub id: String,
-    pub recipient_did: String,
-    pub recipient_peer_id: String,
-    pub filename: String,
-    pub status: String,
-    pub queued_at: u64,
-    pub attempts: u32,
+pub struct ShareInfo {
+    pub asset_id: String,
+    pub share_link: String,
+    pub shared_with: Vec<SharedUserInfo>,
 }
 
-impl From<QueuedSend> for QueuedSendInfo {
-    fn from(s: QueuedSend) -> Self {
-        let status = match &s.status {
-            SendStatus::Pending => "pending".to_string(),
-            SendStatus::InProgress => "in_progress".to_string(),
-            SendStatus::Delivered => "delivered".to_string(),
-            SendStatus::Failed { reason } => format!("failed: {}", reason),
-        };
-        Self {
-            id: s.id,
-            recipient_did: s.recipient_did,
-            recipient_peer_id: s.recipient_peer_id,
-            filename: s.filename,
-            status,
-            queued_at: s.queued_at,
-            attempts: s.attempts,
-        }
-    }
+#[derive(Serialize)]
+pub struct SharedUserInfo {
+    pub did: String,
+    pub name: Option<String>,
 }
 
 #[tauri::command]
-pub fn queue_send(
-    manifest_path: &str,
-    recipient_did: &str,
-    recipient_peer_id: &str,
-    recipient_addr: Option<&str>,
-    share_grant_json: Option<&str>,
-) -> Result<QueuedSendInfo, String> {
-    // Load manifest to get filename + shard CIDs
-    let manifest_json = fs::read_to_string(manifest_path)
+pub fn get_share_info(manifest_path: &str, peer_id: &str) -> Result<ShareInfo, String> {
+    let manifest_bytes = fs::read(manifest_path)
         .map_err(|e| format!("Failed to read manifest: {}", e))?;
-    let manifest: NexusManifest = serde_json::from_str(&manifest_json)
-        .map_err(|e| format!("Invalid manifest: {}", e))?;
+    let asset_id = AssetStore::compute_asset_id(&manifest_bytes);
+    let store = AssetStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open store: {}", e))?;
 
-    let filename = manifest.shards.filename.unwrap_or_else(|| "unnamed".into());
-    let shard_cids = manifest.shards.shards.clone();
+    let shared_dids = store.list_shared_users(&asset_id).unwrap_or_default();
 
-    let queue = SendQueue::open(SEND_QUEUE_PATH);
-    let send = queue.enqueue(
-        recipient_did.to_string(),
-        recipient_peer_id.to_string(),
-        recipient_addr.map(|s| s.to_string()),
-        manifest_path.to_string(),
-        filename,
-        share_grant_json.map(|s| s.to_string()),
-        shard_cids,
-    )?;
+    // Resolve names from contacts
+    let contacts_file = load_contacts();
+    let shared_with: Vec<SharedUserInfo> = shared_dids.iter().map(|did| {
+        let name = contacts_file.contacts.iter()
+            .find(|c| c.did == *did)
+            .map(|c| c.name.clone());
+        SharedUserInfo { did: did.clone(), name }
+    }).collect();
 
-    Ok(send.into())
+    let share_link = AssetStore::share_link(peer_id, &asset_id);
+
+    Ok(ShareInfo {
+        asset_id,
+        share_link,
+        shared_with,
+    })
 }
 
 #[tauri::command]
-pub fn list_send_queue() -> Result<Vec<QueuedSendInfo>, String> {
-    let queue = SendQueue::open(SEND_QUEUE_PATH);
-    Ok(queue.all().into_iter().map(|s| s.into()).collect())
-}
-
-#[tauri::command]
-pub fn cancel_send(id: &str) -> Result<(), String> {
-    let queue = SendQueue::open(SEND_QUEUE_PATH);
-    queue.remove(id)
-}
-
-#[tauri::command]
-pub fn retry_send(id: &str) -> Result<(), String> {
-    let queue = SendQueue::open(SEND_QUEUE_PATH);
-    queue.retry(id)
+pub fn revoke_share(manifest_path: &str, recipient_did: &str) -> Result<bool, String> {
+    let manifest_bytes = fs::read(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let asset_id = AssetStore::compute_asset_id(&manifest_bytes);
+    let store = AssetStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open store: {}", e))?;
+    store.remove_rfrag(&asset_id, recipient_did)
 }
 
 const RECEIVED_FILES_PATH: &str = ".nexus-received.json";

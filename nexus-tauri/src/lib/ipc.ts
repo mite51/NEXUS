@@ -166,37 +166,24 @@ export async function shareFile(
   return invoke('share_file', { manifestPath, recipientDid, recipientPrePkHex, vaultPath, passphrase });
 }
 
-// Send Queue
-export interface QueuedSendInfo {
-  id: string;
-  recipient_did: string;
-  recipient_peer_id: string;
-  filename: string;
-  status: string;
-  queued_at: number;
-  attempts: number;
+// Share Management (pull-only model)
+export interface SharedUserInfo {
+  did: string;
+  name?: string;
 }
 
-export async function queueSend(
-  manifestPath: string,
-  recipientDid: string,
-  recipientPeerId: string,
-  recipientAddr?: string,
-  shareGrantJson?: string
-): Promise<QueuedSendInfo> {
-  return invoke('queue_send', { manifestPath, recipientDid, recipientPeerId, recipientAddr, shareGrantJson });
+export interface ShareInfo {
+  asset_id: string;
+  share_link: string;
+  shared_with: SharedUserInfo[];
 }
 
-export async function listSendQueue(): Promise<QueuedSendInfo[]> {
-  return invoke('list_send_queue');
+export async function getShareInfo(manifestPath: string, peerId: string): Promise<ShareInfo> {
+  return invoke('get_share_info', { manifestPath, peerId });
 }
 
-export async function cancelSend(id: string): Promise<void> {
-  return invoke('cancel_send', { id });
-}
-
-export async function retrySend(id: string): Promise<void> {
-  return invoke('retry_send', { id });
+export async function revokeShare(manifestPath: string, recipientDid: string): Promise<boolean> {
+  return invoke('revoke_share', { manifestPath, recipientDid });
 }
 
 // Received Files

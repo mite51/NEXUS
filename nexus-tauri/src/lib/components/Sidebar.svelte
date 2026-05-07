@@ -6,7 +6,6 @@
   export let online: boolean;
   export let fileCount: number = 0;
   export let sharedCount: number = 0;
-  export let outboxCount: number = 0;
 
   const dispatch = createEventDispatcher();
 
@@ -15,7 +14,6 @@
   const navItems = [
     { id: 'files', icon: '📁', label: 'My Files' },
     { id: 'shared', icon: '📨', label: 'Shared With Me' },
-    { id: 'outbox', icon: '📤', label: 'Outbox' },
     { id: 'contacts', icon: '👤', label: 'Contacts' },
     { id: 'store', icon: '📦', label: 'Store' },
     { id: 'logs', icon: '📋', label: 'Logs' },
@@ -25,7 +23,6 @@
   function badgeFor(id: string): number {
     if (id === 'files') return fileCount;
     if (id === 'shared') return sharedCount;
-    if (id === 'outbox') return outboxCount;
     if (id === 'logs') return logCount;
     return 0;
   }

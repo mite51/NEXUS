@@ -2,19 +2,19 @@
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
   import { unreadLogCount, addLog, markLogsRead } from '../stores/logs';
-  import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, queueSend, deleteFile, renameFile, exportFileBundle, importFileBundle, pickBundleFile } from '../ipc';
-  import type { FileEntry, Contact } from '../ipc';
+  import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, deleteFile, renameFile, exportFileBundle, importFileBundle, pickBundleFile, getShareInfo, revokeShare } from '../ipc';
+  import type { FileEntry, Contact, ShareInfo } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
   import FileGrid from '../components/FileGrid.svelte';
   import DetailPanel from '../components/DetailPanel.svelte';
   import ContactPicker from '../components/ContactPicker.svelte';
+  import SharePanel from '../components/SharePanel.svelte';
   import Sidebar from '../components/Sidebar.svelte';
   import StoreView from './StoreView.svelte';
   import Spinner from '../components/Spinner.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import ContactsView from './ContactsView.svelte';
-  import SendQueueView from './SendQueueView.svelte';
   import SharedWithMeView from './SharedWithMeView.svelte';
   import SettingsView from './SettingsView.svelte';
   import LogsView from './LogsView.svelte';
@@ -22,7 +22,9 @@
   export let vaultPath: string;
 
   let selectedFile: FileEntry | null = null;
-  let pickerMode: 'share' | 'send' | null = null;
+  let shareFile_: FileEntry | null = null;
+  let shareInfo: ShareInfo | null = null;
+  let pickerMode: 'share-add' | null = null;
   let pickerFile: FileEntry | null = null;
   let encrypting = false;
   let decrypting = false;
@@ -175,14 +177,39 @@
     }
   }
 
-  function handleShare(e: CustomEvent<FileEntry>) {
-    pickerFile = e.detail;
-    pickerMode = 'share';
+  async function handleShare(e: CustomEvent<FileEntry>) {
+    const file = e.detail;
+    shareFile_ = file;
+    try {
+      const peerId = $identity?.peer_id || '';
+      shareInfo = await getShareInfo(file.manifest_path, peerId);
+    } catch (err: any) {
+      showToast(`⚠ Failed to get share info: ${err}`);
+      shareInfo = null;
+    }
   }
 
-  function handleSend(e: CustomEvent<FileEntry>) {
-    pickerFile = e.detail;
-    pickerMode = 'send';
+  function handleShareClose() {
+    shareFile_ = null;
+    shareInfo = null;
+  }
+
+  function handleShareAddUser() {
+    pickerFile = shareFile_;
+    pickerMode = 'share-add';
+  }
+
+  async function handleShareRevoke(did: string) {
+    if (!shareFile_) return;
+    try {
+      await revokeShare(shareFile_.manifest_path, did);
+      showToast(`✓ Access revoked`);
+      // Refresh share info
+      const peerId = $identity?.peer_id || '';
+      shareInfo = await getShareInfo(shareFile_.manifest_path, peerId);
+    } catch (err: any) {
+      showToast(`⚠ Revoke failed: ${err}`);
+    }
   }
 
   async function handleExport(e: CustomEvent<FileEntry>) {
@@ -212,7 +239,7 @@
 
   async function handleContactSelected(e: CustomEvent<Contact>) {
     const contact = e.detail;
-    if (pickerMode === 'share' && pickerFile) {
+    if (pickerMode === 'share-add' && pickerFile) {
       if (!contact.pre_public_key_hex) {
         showToast(`Cannot share: ${contact.name} has no PRE public key`);
       } else {
@@ -224,22 +251,15 @@
             vaultPath,
             $passphrase
           );
-          showToast(`✓ Shared with ${contact.name} → ${result.grant_path}`);
+          showToast(`✓ Shared with ${contact.name}`);
+          // Refresh share info
+          if (shareFile_) {
+            const peerId = $identity?.peer_id || '';
+            shareInfo = await getShareInfo(shareFile_.manifest_path, peerId);
+          }
         } catch (e: any) {
           showToast(`Share error: ${e}`);
         }
-      }
-    } else if (pickerMode === 'send' && pickerFile) {
-      const peerId = contact.did.replace('did:nexus:', '');
-      try {
-        await queueSend(
-          pickerFile.manifest_path,
-          contact.did,
-          peerId
-        );
-        showToast(`✓ Queued send to ${contact.name} — will deliver when online`);
-      } catch (e: any) {
-        showToast(`Send error: ${e}`);
       }
     }
     pickerMode = null;
@@ -294,7 +314,6 @@
     <h2>{
       $currentView === 'files' ? 'My Files' :
       $currentView === 'shared' ? 'Shared With Me' :
-      $currentView === 'outbox' ? 'Outbox' :
       $currentView === 'contacts' ? 'Contacts' :
       $currentView === 'logs' ? 'Logs' :
       $currentView === 'settings' ? 'Settings' : 'Store'
@@ -342,8 +361,6 @@
         {/if}
       {:else if $currentView === 'shared'}
         <SharedWithMeView {vaultPath} />
-      {:else if $currentView === 'outbox'}
-        <SendQueueView />
       {:else if $currentView === 'contacts'}
         <ContactsView />
       {:else if $currentView === 'settings'}
@@ -361,7 +378,6 @@
         on:close={() => selectedFile = null}
         on:decrypt={handleDecrypt}
         on:share={handleShare}
-        on:send={handleSend}
         on:delete={handleDelete}
         on:rename={handleRename}
         on:export={handleExport}
@@ -372,10 +388,20 @@
 
 {#if pickerMode}
   <ContactPicker
-    title={pickerMode === 'share' ? 'Share With' : 'Send To'}
-    actionLabel={pickerMode === 'share' ? 'Share' : 'Send'}
+    title="Add User"
+    actionLabel="Share"
     on:select={handleContactSelected}
     on:cancel={handlePickerCancel}
+  />
+{/if}
+
+{#if shareFile_ && shareInfo}
+  <SharePanel
+    file={shareFile_}
+    info={shareInfo}
+    on:close={handleShareClose}
+    on:addUser={handleShareAddUser}
+    on:revoke={(e) => handleShareRevoke(e.detail)}
   />
 {/if}
 

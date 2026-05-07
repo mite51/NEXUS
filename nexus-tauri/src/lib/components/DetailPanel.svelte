@@ -50,9 +50,6 @@
       <button class="action-btn" on:click={() => dispatch('share', file)}>
         🔗 Share
       </button>
-      <button class="action-btn" on:click={() => dispatch('send', file)}>
-        📤 Send to Peer
-      </button>
       <button class="action-btn" on:click={() => dispatch('rename', file)}>
         ✏️ Rename
       </button>
