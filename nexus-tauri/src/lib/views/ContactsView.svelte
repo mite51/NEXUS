@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listContacts, addContact, removeContact } from '../ipc';
+  import { listContacts, addContact, removeContact, updateContact } from '../ipc';
   import type { Contact } from '../ipc';
   import { showToast } from '../stores/app';
 
@@ -14,6 +14,15 @@
   let newNotes = '';
   let error = '';
   let confirmDelete: string | null = null;
+
+  // Edit state
+  let editingDid: string | null = null;
+  let editName = '';
+  let editPrePk = '';
+  let editPeerId = '';
+  let editRelayAddrs = '';
+  let editNotes = '';
+  let editError = '';
 
   onMount(async () => {
     try { contacts = await listContacts(); } catch (e) { console.error(e); }
@@ -46,6 +55,47 @@
       showToast(`Added ${contact.name}`);
     } catch (e: any) {
       error = typeof e === 'string' ? e : 'Failed to add contact';
+    }
+  }
+
+  function startEdit(contact: Contact) {
+    editingDid = contact.did;
+    editName = contact.name;
+    editPrePk = contact.pre_public_key_hex ?? '';
+    editPeerId = contact.peer_id ?? '';
+    editRelayAddrs = (contact.relay_addrs ?? []).join('\n');
+    editNotes = contact.notes ?? '';
+    editError = '';
+  }
+
+  function cancelEdit() {
+    editingDid = null;
+    editError = '';
+  }
+
+  async function handleSaveEdit() {
+    if (!editingDid) return;
+    editError = '';
+    if (!editName.trim()) { editError = 'Name required'; return; }
+
+    const relayAddrs = editRelayAddrs.trim()
+      ? editRelayAddrs.split('\n').map(s => s.trim()).filter(Boolean)
+      : undefined;
+
+    try {
+      const updated = await updateContact(
+        editingDid,
+        editName.trim(),
+        editPrePk.trim() || undefined,
+        editPeerId.trim() || undefined,
+        relayAddrs,
+        editNotes.trim() || undefined
+      );
+      contacts = contacts.map(c => c.did === editingDid ? updated : c);
+      editingDid = null;
+      showToast('Contact updated');
+    } catch (e: any) {
+      editError = typeof e === 'string' ? e : 'Update failed';
     }
   }
 
@@ -104,54 +154,76 @@
     <div class="contact-grid">
       {#each contacts as contact}
         <div class="contact-card">
-          <div class="avatar">
-            {contact.name.charAt(0).toUpperCase()}
-          </div>
-          <div class="info">
-            <div class="name">{contact.name}</div>
-            <button class="did" on:click={() => copyDid(contact.did)} title="Click to copy DID">
-              {contact.did.slice(0, 16)}...{contact.did.slice(-6)}
-            </button>
-            <div class="badges">
-              {#if contact.pre_public_key_hex}
-                <span class="badge ok">PRE ✓</span>
-              {:else}
-                <span class="badge warn">No PRE</span>
-              {/if}
+          {#if editingDid === contact.did}
+            <!-- Edit mode -->
+            <div class="edit-form">
+              <input type="text" placeholder="Name *" bind:value={editName} />
+              <div class="edit-did mono">{contact.did}</div>
+              <input type="text" placeholder="PRE public key hex" bind:value={editPrePk} />
+              <input type="text" placeholder="Peer ID (12D3Koo...)" bind:value={editPeerId} />
+              <textarea class="relay-input" placeholder="Relay addresses (one per line)"
+                        bind:value={editRelayAddrs}></textarea>
+              <input type="text" placeholder="Notes" bind:value={editNotes} />
+              <div class="edit-actions">
+                <button class="save-btn" on:click={handleSaveEdit}>Save</button>
+                <button class="cancel-btn" on:click={cancelEdit}>Cancel</button>
+              </div>
+              {#if editError}<div class="error">{editError}</div>{/if}
+            </div>
+          {:else}
+            <!-- Display mode -->
+            <div class="avatar">
+              {contact.name.charAt(0).toUpperCase()}
+            </div>
+            <div class="info">
+              <div class="name">{contact.name}</div>
+              <button class="did" on:click={() => copyDid(contact.did)} title="Click to copy DID">
+                {contact.did.slice(0, 16)}...{contact.did.slice(-6)}
+              </button>
+              <div class="badges">
+                {#if contact.pre_public_key_hex}
+                  <span class="badge ok">PRE ✓</span>
+                {:else}
+                  <span class="badge warn">No PRE</span>
+                {/if}
+                {#if contact.peer_id}
+                  <span class="badge ok">P2P ✓</span>
+                {:else}
+                  <span class="badge warn">No Peer</span>
+                {/if}
+              </div>
               {#if contact.peer_id}
-                <span class="badge ok">P2P ✓</span>
-              {:else}
-                <span class="badge warn">No Peer</span>
+                <button class="peer-id" on:click={() => copyPeerId(contact.peer_id!)} title="Click to copy Peer ID">
+                  🔗 {contact.peer_id.slice(0, 12)}…{contact.peer_id.slice(-6)}
+                </button>
+              {/if}
+              {#if contact.relay_addrs && contact.relay_addrs.length > 0}
+                <div class="relay-info">
+                  📡 {contact.relay_addrs.length} relay addr{contact.relay_addrs.length > 1 ? 's' : ''}
+                </div>
+              {/if}
+              {#if contact.notes}
+                <div class="notes">{contact.notes}</div>
               {/if}
             </div>
-            {#if contact.peer_id}
-              <button class="peer-id" on:click={() => copyPeerId(contact.peer_id!)} title="Click to copy Peer ID">
-                🔗 {contact.peer_id.slice(0, 12)}…{contact.peer_id.slice(-6)}
+            <div class="actions">
+              <button class="edit-btn" on:click={() => startEdit(contact)} title="Edit">
+                ✏️
               </button>
-            {/if}
-            {#if contact.relay_addrs && contact.relay_addrs.length > 0}
-              <div class="relay-info">
-                📡 {contact.relay_addrs.length} relay addr{contact.relay_addrs.length > 1 ? 's' : ''}
-              </div>
-            {/if}
-            {#if contact.notes}
-              <div class="notes">{contact.notes}</div>
-            {/if}
-          </div>
-          <div class="actions">
-            {#if confirmDelete === contact.did}
-              <button class="delete-confirm" on:click={() => handleDelete(contact.did)}>
-                Confirm
-              </button>
-              <button class="delete-cancel" on:click={() => confirmDelete = null}>
-                ✕
-              </button>
-            {:else}
-              <button class="delete-btn" on:click={() => confirmDelete = contact.did}>
-                🗑
-              </button>
-            {/if}
-          </div>
+              {#if confirmDelete === contact.did}
+                <button class="delete-confirm" on:click={() => handleDelete(contact.did)}>
+                  Confirm
+                </button>
+                <button class="delete-cancel" on:click={() => confirmDelete = null}>
+                  ✕
+                </button>
+              {:else}
+                <button class="delete-btn" on:click={() => confirmDelete = contact.did}>
+                  🗑
+                </button>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/each}
     </div>
@@ -171,18 +243,30 @@
     font-size: 12px; cursor: pointer;
   }
   .add-toggle:hover { opacity: 0.85; }
-  .add-form {
+  .add-form, .edit-form {
     display: flex; flex-direction: column; gap: 8px;
     padding: 16px; background: var(--surface);
     border: 1px solid var(--border); border-radius: 8px;
     margin-bottom: 16px;
   }
-  .add-form input {
+  .edit-form {
+    width: 100%; margin-bottom: 0; padding: 12px;
+    background: var(--bg); border: 1px solid var(--accent);
+  }
+  .add-form input, .edit-form input {
     padding: 8px 12px; background: var(--bg);
     border: 1px solid var(--border); border-radius: 6px;
     color: var(--text); font-size: 13px; outline: none;
   }
-  .add-form input:focus { border-color: var(--accent); }
+  .edit-form input {
+    background: var(--surface);
+  }
+  .add-form input:focus, .edit-form input:focus { border-color: var(--accent); }
+  .edit-did {
+    font-size: 11px; color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    padding: 4px 0; overflow: hidden; text-overflow: ellipsis;
+  }
   .relay-input {
     padding: 8px 12px; background: var(--bg);
     border: 1px solid var(--border); border-radius: 6px;
@@ -190,6 +274,7 @@
     font-family: 'JetBrains Mono', monospace;
     min-height: 48px; resize: vertical;
   }
+  .edit-form .relay-input { background: var(--surface); }
   .relay-input:focus { border-color: var(--accent); }
   .save-btn {
     padding: 8px; background: var(--accent);
@@ -197,6 +282,18 @@
     font-size: 13px; cursor: pointer;
   }
   .save-btn:hover { opacity: 0.85; }
+  .cancel-btn {
+    padding: 8px; background: var(--bg);
+    color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  .cancel-btn:hover { border-color: var(--accent); }
+  .edit-actions {
+    display: flex; gap: 8px;
+  }
+  .edit-actions .save-btn, .edit-actions .cancel-btn {
+    flex: 1;
+  }
   .error { color: var(--error); font-size: 12px; }
   .contact-grid {
     display: flex; flex-direction: column; gap: 8px;
@@ -248,7 +345,12 @@
     font-size: 12px; color: var(--text-secondary);
     margin-top: 4px;
   }
-  .actions { flex-shrink: 0; display: flex; gap: 4px; }
+  .actions { flex-shrink: 0; display: flex; gap: 4px; align-items: flex-start; }
+  .edit-btn {
+    background: none; border: none; cursor: pointer;
+    font-size: 14px; opacity: 0.4; transition: opacity 0.15s;
+  }
+  .edit-btn:hover { opacity: 1; }
   .delete-btn {
     background: none; border: none; cursor: pointer;
     font-size: 14px; opacity: 0.4; transition: opacity 0.15s;
