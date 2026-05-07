@@ -95,6 +95,12 @@ pub struct Contact {
     pub did: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pre_public_key_hex: Option<String>,
+    /// Encrypted PRE seed (hex) — generated on invite, claimable by recipient
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_seed_encrypted: Option<String>,
+    /// Whether this contact was created via invite (keypair generated for them)
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub invite_pending: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peer_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,6 +108,8 @@ pub struct Contact {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
 }
+
+fn is_false(b: &bool) -> bool { !b }
 
 #[derive(Serialize, Deserialize, Default)]
 struct ContactsFile {
@@ -387,10 +395,24 @@ pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, peer
         return Err("Contact with this DID already exists".into());
     }
 
+    // If no PRE public key provided, generate an invite keypair
+    let (pre_pk_hex, pre_seed_enc, invite) = if let Some(pk) = pre_public_key_hex {
+        (Some(pk.to_string()), None, false)
+    } else {
+        // Generate a PRE keypair for the recipient (invite flow)
+        let invite_kp = PreKeypair::generate();
+        let pk_hex = hex_encode(&invite_kp.public_key().bytes);
+        // Store the seed (hex-encoded for now — TODO: encrypt with vault key)
+        let seed_hex = hex_encode(&invite_kp.to_secret_bytes());
+        (Some(pk_hex), Some(seed_hex), true)
+    };
+
     let contact = Contact {
         name: name.to_string(),
         did: did.to_string(),
-        pre_public_key_hex: pre_public_key_hex.map(|s| s.to_string()),
+        pre_public_key_hex: pre_pk_hex,
+        pre_seed_encrypted: pre_seed_enc,
+        invite_pending: invite,
         peer_id: peer_id.map(|s| s.to_string()),
         relay_addrs,
         notes: notes.map(|s| s.to_string()),
@@ -434,6 +456,22 @@ pub fn update_contact(did: &str, name: Option<&str>, pre_public_key_hex: Option<
     let updated = contact.clone();
     save_contacts(&file)?;
     Ok(updated)
+}
+
+/// Export the invite PRE seed for a contact (so recipient can claim their key)
+#[tauri::command]
+pub fn get_invite_key(did: &str) -> Result<String, String> {
+    let file = load_contacts();
+    let contact = file.contacts.iter()
+        .find(|c| c.did == did)
+        .ok_or("Contact not found")?;
+
+    if !contact.invite_pending {
+        return Err("Contact is not an invite (they provided their own key)".into());
+    }
+
+    contact.pre_seed_encrypted.clone()
+        .ok_or("No invite seed stored for this contact".into())
 }
 
 #[tauri::command]

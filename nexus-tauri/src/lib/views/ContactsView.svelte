@@ -31,9 +31,16 @@
   async function handleAdd() {
     error = '';
     if (!newName.trim()) { error = 'Name required'; return; }
-    if (!newDid.trim() || !newDid.startsWith('did:nexus:')) {
-      error = 'Invalid DID (must start with did:nexus:)';
+
+    // DID is optional for invite flow — generate a placeholder if blank
+    let did = newDid.trim();
+    if (did && !did.startsWith('did:nexus:')) {
+      error = 'Invalid DID (must start with did:nexus: or leave blank for invite)';
       return;
+    }
+    if (!did) {
+      // Generate a temporary DID placeholder for invite contacts
+      did = `did:nexus:invite-${Date.now().toString(36)}`;
     }
 
     const relayAddrs = newRelayAddrs.trim()
@@ -43,7 +50,7 @@
     try {
       const contact = await addContact(
         newName.trim(),
-        newDid.trim(),
+        did,
         newPrePk.trim() || undefined,
         newPeerId.trim() || undefined,
         relayAddrs,
@@ -52,7 +59,7 @@
       contacts = [...contacts, contact];
       showAdd = false;
       newName = ''; newDid = ''; newPrePk = ''; newPeerId = ''; newRelayAddrs = ''; newNotes = '';
-      showToast(`Added ${contact.name}`);
+      showToast(`Added ${contact.name}${contact.invite_pending ? ' (invite)' : ''}`);
     } catch (e: any) {
       error = typeof e === 'string' ? e : 'Failed to add contact';
     }
@@ -133,8 +140,9 @@
   {#if showAdd}
     <div class="add-form">
       <input type="text" placeholder="Name *" bind:value={newName} />
-      <input type="text" placeholder="did:nexus:..." bind:value={newDid} />
-      <input type="text" placeholder="PRE public key hex (for sharing)" bind:value={newPrePk} />
+      <input type="text" placeholder="did:nexus:... (or leave blank for invite)" bind:value={newDid} />
+      <input type="text" placeholder="PRE public key hex (leave blank to auto-generate)" bind:value={newPrePk} />
+      <div class="form-hint">No PRE key? One will be generated for them (invite mode)</div>
       <input type="text" placeholder="Peer ID (12D3Koo...)" bind:value={newPeerId} />
       <textarea class="relay-input" placeholder="Relay addresses (one per line, optional)"
                 bind:value={newRelayAddrs}></textarea>
@@ -181,7 +189,9 @@
                 {contact.did.slice(0, 16)}...{contact.did.slice(-6)}
               </button>
               <div class="badges">
-                {#if contact.pre_public_key_hex}
+                {#if contact.invite_pending}
+                  <span class="badge invite">📨 Invite</span>
+                {:else if contact.pre_public_key_hex}
                   <span class="badge ok">PRE ✓</span>
                 {:else}
                   <span class="badge warn">No PRE</span>
@@ -330,6 +340,8 @@
   }
   .badge.ok { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
   .badge.warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+  .badge.invite { background: rgba(99, 102, 241, 0.15); color: #6366f1; }
+  .form-hint { font-size: 11px; color: var(--text-secondary); margin-top: -4px; }
   .peer-id {
     font-size: 10px; color: var(--text-secondary);
     font-family: 'JetBrains Mono', monospace;

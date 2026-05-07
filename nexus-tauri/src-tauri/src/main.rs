@@ -25,6 +25,7 @@ fn main() {
             commands::list_contacts,
             commands::remove_contact,
             commands::update_contact,
+            commands::get_invite_key,
             commands::share_file,
             commands::queue_send,
             commands::list_send_queue,

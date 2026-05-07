@@ -111,6 +111,8 @@ export interface Contact {
   name: string;
   did: string;
   pre_public_key_hex?: string;
+  pre_seed_encrypted?: string;
+  invite_pending?: boolean;
   peer_id?: string;
   relay_addrs?: string[];
   notes?: string;
@@ -126,6 +128,10 @@ export async function listContacts(): Promise<Contact[]> {
 
 export async function removeContact(did: string): Promise<void> {
   return invoke('remove_contact', { did });
+}
+
+export async function getInviteKey(did: string): Promise<string> {
+  return invoke('get_invite_key', { did });
 }
 
 export async function updateContact(did: string, name?: string, prePublicKeyHex?: string, peerId?: string, relayAddrs?: string[], notes?: string): Promise<Contact> {
