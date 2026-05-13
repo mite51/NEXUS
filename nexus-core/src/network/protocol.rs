@@ -57,13 +57,6 @@ pub enum NexusResponse {
     },
     /// Asset not found or unauthorized
     AssetDenied { asset_id: String, reason: String },
-    /// Public asset pull response: manifest + shards + plaintext DEK (no rfrag needed)
-    PublicAsset {
-        asset_id: String,
-        manifest: Vec<u8>,
-        shards: Vec<Vec<u8>>,
-        dek: Vec<u8>,
-    },
     /// Pong (health check response)
     Pong,
     /// Error

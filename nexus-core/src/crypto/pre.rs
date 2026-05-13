@@ -36,6 +36,24 @@ pub enum PreError {
     DeserializationFailed,
 }
 
+/// Well-known seed for the "public" PRE identity.
+/// Every client embeds this — it's the shared key for public assets.
+/// Security note: this is intentionally public. "Public" means anyone can decrypt.
+const PUBLIC_PRE_SEED: [u8; 32] = [
+    0x6e, 0x65, 0x78, 0x75, 0x73, 0x2d, 0x70, 0x75,
+    0x62, 0x6c, 0x69, 0x63, 0x2d, 0x70, 0x72, 0x65,
+    0x2d, 0x73, 0x65, 0x65, 0x64, 0x2d, 0x76, 0x31,
+    0x2d, 0x32, 0x30, 0x32, 0x36, 0x00, 0x00, 0x00,
+]; // "nexus-public-pre-seed-v1-2026\0\0\0"
+
+/// The DID used for public share grants
+pub const PUBLIC_DID: &str = "did:nexus:public";
+
+/// Get the well-known public PRE keypair (embedded in every client)
+pub fn public_pre_keypair() -> PreKeypair {
+    PreKeypair::from_seed_internal(&PUBLIC_PRE_SEED)
+}
+
 /// A PRE keypair (secp256k1 via umbral)
 /// Internally backed by a 32-byte seed for deterministic reconstruction.
 #[derive(Clone)]

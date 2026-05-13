@@ -1040,7 +1040,13 @@ pub async fn pull(
 
             // Decrypt DEK using PRE (delegated decryption)
             println!("  Decrypting with PRE...");
-            let dek = pre_kp.decrypt_dek_reencrypted(
+            let decrypt_kp = if grant.recipient == nexus_core::crypto::pre::PUBLIC_DID {
+                // Public asset — use well-known public keypair
+                nexus_core::crypto::pre::public_pre_keypair()
+            } else {
+                pre_kp.clone()
+            };
+            let dek = decrypt_kp.decrypt_dek_reencrypted(
                 &nexus_manifest.encrypted_dek,
                 &grant.cfrags,
                 &nexus_manifest.owner_pre_pk,

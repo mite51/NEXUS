@@ -755,25 +755,49 @@ pub fn set_share_public(manifest_path: &str, public: bool, vault_path: &str, pas
     let store = AssetStore::open(".nexus-store")
         .map_err(|e| format!("Failed to open store: {}", e))?;
 
+    use nexus_core::crypto::pre::{public_pre_keypair, PUBLIC_DID};
+
     if public {
-        // Extract and store plaintext DEK for public access
+        // Generate PRE rfrag for the well-known public identity
         let (_identity_kp, pre_kp) = load_keys(vault_path, passphrase)?;
         let manifest: NexusManifest = serde_json::from_slice(&manifest_bytes)
             .map_err(|e| format!("Invalid manifest: {}", e))?;
-        let dek = pre_kp.decrypt_dek(&manifest.encrypted_dek)
-            .map_err(|e| format!("Failed to decrypt DEK: {}", e))?;
-        // Store plaintext DEK
-        let dek_dir = std::path::Path::new(".nexus-store").join("public-dek");
-        fs::create_dir_all(&dek_dir)
-            .map_err(|e| format!("Failed to create public-dek dir: {}", e))?;
-        fs::write(dek_dir.join(&asset_id), &dek)
-            .map_err(|e| format!("Failed to write public DEK: {}", e))?;
+
+        let public_kp = public_pre_keypair();
+        let public_pk = public_kp.public_key();
+
+        // Generate kfrags: owner → public keypair
+        let signer = PreSigner::new();
+        let vk = signer.verifying_key();
+        let kfrags = signer
+            .generate_kfrags(&pre_kp, &public_pk, 1, 1)
+            .map_err(|e| format!("kfrag generation failed: {}", e))?;
+
+        // Re-encrypt to produce cfrags
+        let cfrags: Result<Vec<_>, _> = kfrags
+            .iter()
+            .map(|kf| reencrypt(&manifest.encrypted_dek, kf, &pre_kp.public_key(), &public_pk, &vk))
+            .collect();
+        let cfrags = cfrags.map_err(|e| format!("Re-encryption failed: {}", e))?;
+
+        // Build share grant (same format as private shares)
+        let grant = ShareGrant {
+            recipient: PUBLIC_DID.to_string(),
+            recipient_pre_pk: public_pk,
+            cfrags,
+            verifying_key: vk,
+            manifest_ref: manifest_path.to_string(),
+        };
+
+        let rfrag_bytes = serde_json::to_vec(&grant)
+            .map_err(|e| format!("Serialization failed: {}", e))?;
+
+        // Store as rfrag for did:nexus:public
+        store.put_rfrag(&asset_id, PUBLIC_DID, &rfrag_bytes)?;
     } else {
-        // Remove plaintext DEK
-        let dek_path = std::path::Path::new(".nexus-store").join("public-dek").join(&asset_id);
-        if dek_path.exists() {
-            let _ = fs::remove_file(&dek_path);
-        }
+        // Revoke public: remove the public rfrag
+        use nexus_core::crypto::pre::PUBLIC_DID;
+        let _ = store.remove_rfrag(&asset_id, PUBLIC_DID);
     }
 
     store.set_public(&asset_id, public)
@@ -847,7 +871,12 @@ pub fn decrypt_received(
         let grant: ShareGrant = serde_json::from_str(grant_json)
             .map_err(|e| format!("Invalid share grant: {}", e))?;
 
-        pre_kp.decrypt_dek_reencrypted(&manifest.encrypted_dek, &grant.cfrags, &manifest.owner_pre_pk, &grant.verifying_key)
+        let decrypt_kp = if grant.recipient == nexus_core::crypto::pre::PUBLIC_DID {
+            nexus_core::crypto::pre::public_pre_keypair()
+        } else {
+            pre_kp.clone()
+        };
+        decrypt_kp.decrypt_dek_reencrypted(&manifest.encrypted_dek, &grant.cfrags, &manifest.owner_pre_pk, &grant.verifying_key)
             .map_err(|e| format!("PRE decryption failed: {:?}", e))?
     } else {
         // Direct decryption (we're the owner)

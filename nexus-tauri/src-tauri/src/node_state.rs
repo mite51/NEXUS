@@ -364,62 +364,61 @@ fn spawn_event_handler(
                                 },
                             }
                         } else if store.is_public(&asset_id).unwrap_or(false) {
-                            // Public asset — serve manifest + shards with public DEK
-                            match store.get_manifest(&asset_id) {
-                                Ok(Some(manifest_bytes)) => {
-                                    let shard_store = nexus_core::storage::ShardStore::open(".nexus-store").ok();
-                                    let mut shard_data = Vec::new();
-                                    let mut shards_ok = true;
-                                    if let Ok(manifest) = serde_json::from_slice::<nexus_core::manifest::NexusManifest>(&manifest_bytes) {
-                                        for cid in &manifest.shards.shards {
-                                            if let Some(ref ss) = shard_store {
-                                                if let Ok(Some(shard)) = ss.get(cid) {
-                                                    shard_data.push(shard.data);
+                            // Public asset — serve using did:nexus:public rfrag (same as private flow)
+                            use nexus_core::crypto::pre::PUBLIC_DID;
+                            if let Ok(Some(rfrag)) = store.get_rfrag(&asset_id, PUBLIC_DID) {
+                                match store.get_manifest(&asset_id) {
+                                    Ok(Some(manifest_bytes)) => {
+                                        let shard_store = nexus_core::storage::ShardStore::open(".nexus-store").ok();
+                                        let mut shard_data = Vec::new();
+                                        let mut shards_ok = true;
+                                        if let Ok(manifest) = serde_json::from_slice::<nexus_core::manifest::NexusManifest>(&manifest_bytes) {
+                                            for cid in &manifest.shards.shards {
+                                                if let Some(ref ss) = shard_store {
+                                                    if let Ok(Some(shard)) = ss.get(cid) {
+                                                        shard_data.push(shard.data);
+                                                    } else {
+                                                        shards_ok = false;
+                                                        break;
+                                                    }
                                                 } else {
                                                     shards_ok = false;
                                                     break;
                                                 }
-                                            } else {
-                                                shards_ok = false;
-                                                break;
                                             }
+                                        } else {
+                                            shards_ok = false;
                                         }
-                                    } else {
-                                        shards_ok = false;
-                                    }
-                                    if shards_ok {
-                                        // Load public DEK
-                                        let public_dek_path = std::path::Path::new(".nexus-store").join("public-dek").join(&asset_id);
-                                        if let Ok(dek_bytes) = std::fs::read(&public_dek_path) {
+                                        if shards_ok {
                                             let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
                                                 level: "info".into(),
                                                 source: "Pull".into(),
                                                 message: format!("Serving PUBLIC asset to {}", &peer.to_string()[..16]),
                                                 detail: Some(format!("asset: {}", &asset_id[..16])),
                                             });
-                                            nexus_core::network::protocol::NexusResponse::PublicAsset {
+                                            nexus_core::network::protocol::NexusResponse::Asset {
                                                 asset_id,
+                                                rfrag,
                                                 manifest: manifest_bytes,
                                                 shards: shard_data,
-                                                dek: dek_bytes,
                                             }
                                         } else {
                                             nexus_core::network::protocol::NexusResponse::AssetDenied {
                                                 asset_id,
-                                                reason: "Public DEK not available".into(),
+                                                reason: "Shards not available".into(),
                                             }
                                         }
-                                    } else {
-                                        nexus_core::network::protocol::NexusResponse::AssetDenied {
-                                            asset_id,
-                                            reason: "Shards not available".into(),
-                                        }
                                     }
+                                    _ => nexus_core::network::protocol::NexusResponse::AssetDenied {
+                                        asset_id,
+                                        reason: "Manifest not found".into(),
+                                    },
                                 }
-                                _ => nexus_core::network::protocol::NexusResponse::AssetDenied {
+                            } else {
+                                nexus_core::network::protocol::NexusResponse::AssetDenied {
                                     asset_id,
-                                    reason: "Manifest not found".into(),
-                                },
+                                    reason: "Public grant not configured".into(),
+                                }
                             }
                         } else {
                             nexus_core::network::protocol::NexusResponse::AssetDenied {
