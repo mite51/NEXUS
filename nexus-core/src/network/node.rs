@@ -147,6 +147,13 @@ pub enum NodeCommand {
         verifying_key: Vec<u8>,
         sender_pre_pk: Vec<u8>,
     },
+    /// Pull an asset from a peer (new pull-only flow)
+    PullAsset {
+        peer: PeerId,
+        asset_id: String,
+        requester_did: String,
+        signature: Vec<u8>,
+    },
     /// Publish a message to a GossipSub topic
     Publish { topic: String, data: Vec<u8> },
     /// Subscribe to a GossipSub topic
@@ -312,6 +319,16 @@ impl NexusNode {
                                     },
                                 );
                             }
+                            NodeCommand::PullAsset { peer, asset_id, requester_did, signature } => {
+                                swarm.behaviour_mut().request_response.send_request(
+                                    &peer,
+                                    NexusRequest::PullAsset {
+                                        asset_id,
+                                        requester_did,
+                                        signature,
+                                    },
+                                );
+                            }
                             NodeCommand::Publish { topic, data } => {
                                 let topic = gossipsub::IdentTopic::new(topic);
                                 let _ = swarm.behaviour_mut().gossipsub.publish(topic, data);
@@ -411,6 +428,19 @@ impl NexusNode {
     ) -> Result<(), mpsc::error::SendError<NodeCommand>> {
         self.command_tx.send(NodeCommand::SendKfrags {
             peer, manifest_id, kfrags, verifying_key, sender_pre_pk,
+        }).await
+    }
+
+    /// Pull an asset from a peer using the pull-only protocol
+    pub async fn pull_asset(
+        &self,
+        peer: PeerId,
+        asset_id: String,
+        requester_did: String,
+        signature: Vec<u8>,
+    ) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::PullAsset {
+            peer, asset_id, requester_did, signature,
         }).await
     }
 

@@ -123,6 +123,20 @@ enum Commands {
     },
     /// Send an encrypted file to a peer (push shards + manifest)
     /// Start a relay server (helps NATted peers connect)
+    ///
+    /// Pull an encrypted file using a nexus:// share link
+    Pull {
+        /// nexus:// share link (e.g. nexus://<peer-id>/asset/<asset-id>)
+        link: String,
+        /// Output filename (defaults to original name from manifest)
+        #[arg(long, short)]
+        output: Option<String>,
+        /// Multiaddr to dial the peer (if not discoverable via mDNS)
+        #[arg(long)]
+        addr: Option<String>,
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
     Relay {
         #[arg(long, default_value = "vault.json")]
         vault: String,
@@ -232,6 +246,10 @@ fn main() {
         Commands::Fetch { manifest, from, share, output, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(commands::fetch(&manifest, &from, share.as_deref(), output.as_deref(), &vault))
+        }
+        Commands::Pull { link, output, addr, vault } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(commands::pull(&link, output.as_deref(), addr.as_deref(), &vault))
         }
         Commands::Relay { vault, port, max_circuits, max_reservations_per_peer } => {
             let rt = tokio::runtime::Runtime::new().unwrap();

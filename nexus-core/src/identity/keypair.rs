@@ -1,6 +1,6 @@
 //! Ed25519 keypair generation and management
 
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +58,17 @@ impl IdentityKeypair {
     /// Get the libp2p PeerId derived from this keypair
     pub fn peer_id(&self) -> libp2p::PeerId {
         self.to_libp2p_keypair().public().to_peer_id()
+    }
+
+    /// Sign arbitrary bytes with this identity key
+    pub fn sign(&self, message: &[u8]) -> Vec<u8> {
+        let sig = self.signing_key.sign(message);
+        sig.to_bytes().to_vec()
+    }
+
+    /// Get the DID string for this keypair
+    pub fn did(&self) -> String {
+        crate::identity::did::Did::from_public_identity(&self.public_identity()).0
     }
 }
 

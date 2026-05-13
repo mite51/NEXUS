@@ -318,7 +318,7 @@ fn spawn_event_handler(
                             match store.get_manifest(&asset_id) {
                                 Ok(Some(manifest_bytes)) => {
                                     // Load shards from manifest
-                                    let shard_store = nexus_core::storage::ShardStore::open(".nexus-store/shards").ok();
+                                    let shard_store = nexus_core::storage::ShardStore::open(".nexus-store").ok();
                                     let mut shard_data = Vec::new();
                                     let mut shards_ok = true;
                                     if let Ok(manifest) = serde_json::from_slice::<nexus_core::manifest::NexusManifest>(&manifest_bytes) {

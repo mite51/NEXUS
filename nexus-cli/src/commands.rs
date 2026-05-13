@@ -6,6 +6,7 @@ use nexus_core::network::{NexusNode, NodeConfig, NodeEvent};
 use nexus_core::network::{RelayServer, RelayConfig, RelayServerEvent};
 use nexus_core::storage::shard::{self, Shard, DEFAULT_SHARD_SIZE};
 use nexus_core::storage::{ShardStore, compute_cid};
+use nexus_core::storage::AssetStore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
@@ -897,6 +898,191 @@ pub async fn fetch(
 
     println!("  ✓ Decrypted: {} ({} bytes)", out, plaintext.len());
     Ok(())
+}
+
+// --- Pull Command (pull-only sharing) ---
+
+pub async fn pull(
+    link: &str,
+    output_path: Option<&str>,
+    addr_override: Option<&str>,
+    vault_path: &str,
+) -> Result<(), String> {
+    // Parse the nexus:// share link
+    let (target_peer_str, asset_id) = AssetStore::parse_share_link(link)
+        .ok_or_else(|| format!("Invalid share link: {}", link))?;
+
+    println!("📡 Pulling asset: {}...", &asset_id[..16.min(asset_id.len())]);
+    println!("  From peer: {}...", &target_peer_str[..16.min(target_peer_str.len())]);
+
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    let my_did = keypair.did();
+    println!("  My DID: {}", my_did);
+
+    // Sign the asset_id to prove DID ownership
+    let signature = keypair.sign(asset_id.as_bytes());
+
+    // Determine target peer address
+    let target_peer: libp2p::PeerId = target_peer_str.parse()
+        .map_err(|e| format!("Invalid peer ID in link: {}", e))?;
+
+    // Build the multiaddr to dial
+    let dial_addr: libp2p::Multiaddr = if let Some(addr_str) = addr_override {
+        addr_str.parse()
+            .map_err(|e| format!("Invalid address: {}", e))?
+    } else {
+        // Default: try localhost for testing, real usage would need mDNS or known addr
+        format!("/ip4/127.0.0.1/udp/4001/quic-v1/p2p/{}", target_peer_str)
+            .parse()
+            .map_err(|e| format!("Failed to build addr: {}", e))?
+    };
+
+    // Start ephemeral node
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+    let config = NodeConfig {
+        listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
+        bootstrap_peers: vec![],
+        mdns_enabled: true,
+        relay_servers: vec![],
+        telemetry_enabled: true,
+        telemetry_dir: None,
+    };
+
+    let mut node = NexusNode::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start node: {}", e))?;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Dial the peer
+    println!("  Connecting to {}...", &target_peer.to_string()[..16]);
+    node.dial(dial_addr).await.map_err(|e| format!("Dial failed: {}", e))?;
+
+    // Wait for connection
+    let connected = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::PeerDiscovered(p) = event {
+                if p == target_peer { return true; }
+            }
+        }
+        false
+    }).await.unwrap_or(false);
+
+    if !connected {
+        node.shutdown().await.ok();
+        return Err("Failed to connect to peer within 10s".into());
+    }
+    println!("  ✅ Connected");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Send PullAsset request
+    println!("  Requesting asset...");
+    node.pull_asset(
+        target_peer,
+        asset_id.clone(),
+        my_did.clone(),
+        signature,
+    ).await.map_err(|e| format!("Pull request failed: {}", e))?;
+
+    // Wait for response
+    let response = tokio::time::timeout(Duration::from_secs(60), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::ShardReceived { response, .. } = event {
+                return Some(response);
+            }
+        }
+        None
+    }).await
+        .map_err(|_| "Timeout waiting for asset response".to_string())?
+        .ok_or_else(|| "Channel closed while waiting for asset".to_string())?;
+
+    node.shutdown().await.ok();
+
+    match response {
+        nexus_core::network::protocol::NexusResponse::Asset {
+            asset_id: _,
+            rfrag,
+            manifest,
+            shards,
+        } => {
+            println!("  📦 Received: {} bytes manifest, {} shards, {} bytes rfrag",
+                manifest.len(), shards.len(), rfrag.len());
+
+            // Parse the rfrag (ShareGrant)
+            let grant: ShareGrant = serde_json::from_slice(&rfrag)
+                .map_err(|e| format!("Failed to parse rfrag: {}", e))?;
+
+            // Parse manifest
+            let nexus_manifest: NexusManifest = serde_json::from_slice(&manifest)
+                .map_err(|e| format!("Failed to parse manifest: {}", e))?;
+
+            let filename = nexus_manifest.shards.filename.clone()
+                .unwrap_or_else(|| "unnamed".into());
+            println!("  File: {} ({} shards)", filename, nexus_manifest.shards.shards.len());
+
+            // Verify shard count
+            if shards.len() != nexus_manifest.shards.shards.len() {
+                return Err(format!("Shard count mismatch: got {} expected {}",
+                    shards.len(), nexus_manifest.shards.shards.len()));
+            }
+
+            // Verify shard CIDs
+            for (i, (expected_cid, shard_data)) in nexus_manifest.shards.shards.iter().zip(&shards).enumerate() {
+                let computed = compute_cid(shard_data);
+                let computed_hex: String = computed.iter().map(|b| format!("{:02x}", b)).collect();
+                if computed_hex != *expected_cid {
+                    return Err(format!("CID mismatch for shard {}: expected {}, got {}",
+                        i, expected_cid, computed_hex));
+                }
+                println!("  [{}/{}] ✅ Verified: {}...", i + 1, shards.len(), &expected_cid[..16.min(expected_cid.len())]);
+            }
+
+            // Decrypt DEK using PRE (delegated decryption)
+            println!("  Decrypting with PRE...");
+            let dek = pre_kp.decrypt_dek_reencrypted(
+                &nexus_manifest.encrypted_dek,
+                &grant.cfrags,
+                &nexus_manifest.owner_pre_pk,
+                &grant.verifying_key,
+            ).map_err(|e| format!("PRE decryption failed: {}", e))?;
+
+            // Build Shard objects and reassemble
+            let shard_objs: Vec<Shard> = nexus_manifest.shards.shards.iter()
+                .zip(shards)
+                .map(|(cid_hex, data)| {
+                    let cid_bytes: Vec<u8> = (0..cid_hex.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&cid_hex[i..i+2], 16).unwrap())
+                        .collect();
+                    Shard { cid: cid_bytes, data }
+                })
+                .collect();
+
+            let encrypted_body = shard::reassemble(&nexus_manifest.shards, &shard_objs)
+                .ok_or("Failed to reassemble shards")?;
+
+            let plaintext = decrypt_data(&encrypted_body, &dek)
+                .map_err(|_| "Decryption failed — data corrupted".to_string())?;
+
+            let out = output_path
+                .map(|s| s.to_string())
+                .unwrap_or(filename);
+
+            fs::write(&out, &plaintext)
+                .map_err(|e| format!("Failed to write output: {}", e))?;
+
+            println!("  ✓ Decrypted: {} ({} bytes)", out, plaintext.len());
+            println!("\n🎉 Pull complete!");
+            Ok(())
+        }
+        nexus_core::network::protocol::NexusResponse::AssetDenied { asset_id, reason } => {
+            Err(format!("Access denied for asset {}: {}", &asset_id[..16.min(asset_id.len())], reason))
+        }
+        other => {
+            Err(format!("Unexpected response: {:?}", other))
+        }
+    }
 }
 
 // --- Store Commands ---
