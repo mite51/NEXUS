@@ -179,6 +179,28 @@ impl AssetStore {
         &self.root
     }
 
+    /// Check if an asset is marked as public
+    pub fn is_public(&self, asset_id: &str) -> Result<bool, String> {
+        let marker = self.root.join("public").join(asset_id);
+        Ok(marker.exists())
+    }
+
+    /// Set or unset public access for an asset
+    pub fn set_public(&self, asset_id: &str, public: bool) -> Result<bool, String> {
+        let dir = self.root.join("public");
+        let marker = dir.join(asset_id);
+        if public {
+            fs::create_dir_all(&dir)
+                .map_err(|e| format!("Failed to create public dir: {}", e))?;
+            fs::write(&marker, b"")
+                .map_err(|e| format!("Failed to set public: {}", e))?;
+        } else if marker.exists() {
+            fs::remove_file(&marker)
+                .map_err(|e| format!("Failed to unset public: {}", e))?;
+        }
+        Ok(true)
+    }
+
     // Internal helpers
 
     fn manifest_path(&self, asset_id: &str) -> PathBuf {

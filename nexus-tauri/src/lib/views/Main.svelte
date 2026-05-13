@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { identity, files, currentView, nodeOnline, didShort, passphrase, showToast } from '../stores/app';
   import { unreadLogCount, addLog, markLogsRead } from '../stores/logs';
+  import { invoke } from '@tauri-apps/api/core';
   import { listFiles, pickFileToEncrypt, pickFilesToEncrypt, encryptFile, decryptFile, pickSaveLocation, shareFile, deleteFile, renameFile, exportFileBundle, importFileBundle, pickBundleFile, getShareInfo, revokeShare } from '../ipc';
   import type { FileEntry, Contact, ShareInfo } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -197,6 +198,17 @@
   function handleShareAddUser() {
     pickerFile = shareFile_;
     pickerMode = 'share-add';
+  }
+
+  async function handleSetPublic(isPublic: boolean) {
+    if (!shareFile_ || !shareInfo) return;
+    try {
+      await invoke('set_share_public', { manifestPath: shareFile_.manifest_path, public: isPublic, vaultPath, passphrase: $passphrase });
+      shareInfo = { ...shareInfo, public: isPublic };
+      showToast(isPublic ? '🌐 Asset set to public' : '🔒 Asset set to private');
+    } catch (err: any) {
+      showToast(`⚠ Failed: ${err}`);
+    }
   }
 
   async function handleShareRevoke(did: string) {
@@ -402,6 +414,7 @@
     on:close={handleShareClose}
     on:addUser={handleShareAddUser}
     on:revoke={(e) => handleShareRevoke(e.detail)}
+    on:setPublic={(e) => handleSetPublic(e.detail)}
   />
 {/if}
 

@@ -32,6 +32,7 @@ fn main() {
             commands::share_file,
             commands::get_share_info,
             commands::revoke_share,
+            commands::set_share_public,
             commands::list_received_files,
             commands::decrypt_received,
             commands::remove_received,

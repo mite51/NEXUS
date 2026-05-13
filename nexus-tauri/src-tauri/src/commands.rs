@@ -697,6 +697,7 @@ pub struct ShareInfo {
     pub asset_id: String,
     pub share_link: String,
     pub shared_with: Vec<SharedUserInfo>,
+    pub public: bool,
 }
 
 #[derive(Serialize)]
@@ -726,10 +727,13 @@ pub fn get_share_info(manifest_path: &str, peer_id: &str) -> Result<ShareInfo, S
 
     let share_link = AssetStore::share_link(peer_id, &asset_id);
 
+    let public = store.is_public(&asset_id).unwrap_or(false);
+
     Ok(ShareInfo {
         asset_id,
         share_link,
         shared_with,
+        public,
     })
 }
 
@@ -741,6 +745,38 @@ pub fn revoke_share(manifest_path: &str, recipient_did: &str) -> Result<bool, St
     let store = AssetStore::open(".nexus-store")
         .map_err(|e| format!("Failed to open store: {}", e))?;
     store.remove_rfrag(&asset_id, recipient_did)
+}
+
+#[tauri::command]
+pub fn set_share_public(manifest_path: &str, public: bool, vault_path: &str, passphrase: &str) -> Result<bool, String> {
+    let manifest_bytes = fs::read(manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    let asset_id = AssetStore::compute_asset_id(&manifest_bytes);
+    let store = AssetStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open store: {}", e))?;
+
+    if public {
+        // Extract and store plaintext DEK for public access
+        let (_identity_kp, pre_kp) = load_keys(vault_path, passphrase)?;
+        let manifest: NexusManifest = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| format!("Invalid manifest: {}", e))?;
+        let dek = pre_kp.decrypt_dek(&manifest.encrypted_dek)
+            .map_err(|e| format!("Failed to decrypt DEK: {}", e))?;
+        // Store plaintext DEK
+        let dek_dir = std::path::Path::new(".nexus-store").join("public-dek");
+        fs::create_dir_all(&dek_dir)
+            .map_err(|e| format!("Failed to create public-dek dir: {}", e))?;
+        fs::write(dek_dir.join(&asset_id), &dek)
+            .map_err(|e| format!("Failed to write public DEK: {}", e))?;
+    } else {
+        // Remove plaintext DEK
+        let dek_path = std::path::Path::new(".nexus-store").join("public-dek").join(&asset_id);
+        if dek_path.exists() {
+            let _ = fs::remove_file(&dek_path);
+        }
+    }
+
+    store.set_public(&asset_id, public)
 }
 
 const RECEIVED_FILES_PATH: &str = ".nexus-received.json";

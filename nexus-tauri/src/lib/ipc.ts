@@ -176,6 +176,7 @@ export interface ShareInfo {
   asset_id: string;
   share_link: string;
   shared_with: SharedUserInfo[];
+  public?: boolean;
 }
 
 export async function getShareInfo(manifestPath: string, peerId: string): Promise<ShareInfo> {

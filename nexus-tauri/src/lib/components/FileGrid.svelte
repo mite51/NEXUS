@@ -15,53 +15,103 @@
     <p class="hint">Drop a file here or click "Encrypt File" to get started</p>
   </div>
 {:else}
-  <div class="grid">
+  <div class="list-view">
+    <div class="list-header">
+      <span class="col-icon"></span>
+      <span class="col-name">Name</span>
+      <span class="col-size">Size</span>
+      <span class="col-shards">Shards</span>
+      <span class="col-owner">Owner</span>
+    </div>
     {#each files as file, i (file.manifest_path)}
       <button
-        class="card"
+        class="list-row"
         type="button"
         on:click={() => dispatch('select', file)}
-        in:fly={{ y: 20, duration: 200, delay: Math.min(i * 30, 300) }}
+        in:fly={{ y: 10, duration: 150, delay: Math.min(i * 20, 200) }}
       >
-        <div class="card-icon">{fileIcon(file.filename)}</div>
-        <div class="card-name" title={file.filename}>{file.filename}</div>
-        <div class="card-meta">
-          {file.shard_count} shard{file.shard_count !== 1 ? 's' : ''}
-          {#if file.total_size}• {formatBytes(file.total_size)}{/if}
-        </div>
+        <span class="col-icon">{fileIcon(file.filename)}</span>
+        <span class="col-name" title={file.filename}>{file.filename}</span>
+        <span class="col-size">{file.total_size ? formatBytes(file.total_size) : '—'}</span>
+        <span class="col-shards">{file.shard_count}</span>
+        <span class="col-owner" title={file.owner}>{file.owner.length > 20 ? file.owner.slice(0, 16) + '…' : file.owner}</span>
       </button>
     {/each}
   </div>
 {/if}
 
 <style>
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 16px;
+  .list-view {
+    display: flex;
+    flex-direction: column;
+    font-size: 13px;
   }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
+  .list-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .list-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: none;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.1s;
     text-align: left;
     font: inherit;
     color: var(--text);
     width: 100%;
   }
-  .card:hover {
-    border-color: var(--accent);
-    transform: translateY(-2px);
+  .list-row:hover {
+    background: var(--surface);
   }
-  .card-icon { font-size: 28px; margin-bottom: 8px; }
-  .card-name {
-    font-size: 14px; font-weight: 500; margin-bottom: 4px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .list-row:last-child {
+    border-bottom: none;
   }
-  .card-meta { font-size: 12px; color: var(--text-secondary); }
+  .col-icon { width: 32px; font-size: 16px; flex-shrink: 0; }
+  .col-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .col-size {
+    width: 80px;
+    text-align: right;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  .col-shards {
+    width: 60px;
+    text-align: center;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  .col-owner {
+    width: 140px;
+    text-align: right;
+    color: var(--text-secondary);
+    font-size: 11px;
+    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .empty {
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
