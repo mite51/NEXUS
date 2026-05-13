@@ -325,7 +325,7 @@
   <div class="toolbar">
     <h2>{
       $currentView === 'files' ? 'My Files' :
-      $currentView === 'shared' ? 'Shared With Me' :
+      $currentView === 'shared' ? 'Download Shared File' :
       $currentView === 'contacts' ? 'Contacts' :
       $currentView === 'logs' ? 'Logs' :
       $currentView === 'settings' ? 'Settings' : 'Store'

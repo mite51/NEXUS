@@ -1,10 +1,11 @@
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, broadcast};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use nexus_core::identity::IdentityKeypair;
 use nexus_core::network::{NexusNode, NodeConfig, NodeCommand, NodeEvent, PeerId};
+use nexus_core::network::protocol::NexusResponse;
 use nexus_core::storage::ReceivedFiles;
 
 const RECEIVED_FILES_PATH: &str = ".nexus-received.json";
@@ -13,6 +14,15 @@ const RECEIVED_MANIFESTS_DIR: &str = ".nexus-received-manifests";
 /// Shared node state managed by Tauri
 pub struct NodeState {
     inner: Arc<Mutex<NodeInner>>,
+    /// Broadcast channel for pull responses (NodeEvent::ShardReceived)
+    pull_response_tx: broadcast::Sender<PullResponse>,
+}
+
+/// A pull response forwarded from the event loop
+#[derive(Debug, Clone)]
+pub struct PullResponse {
+    pub peer: PeerId,
+    pub response: NexusResponse,
 }
 
 struct NodeInner {
@@ -36,11 +46,18 @@ pub struct NodeInfo {
 
 impl NodeState {
     pub fn new() -> Self {
+        let (pull_response_tx, _) = broadcast::channel(16);
         Self {
             inner: Arc::new(Mutex::new(NodeInner {
                 node: None,
             })),
+            pull_response_tx,
         }
+    }
+
+    /// Subscribe to pull response events
+    pub fn subscribe_pull_responses(&self) -> broadcast::Receiver<PullResponse> {
+        self.pull_response_tx.subscribe()
     }
 
     pub async fn start(&self, identity: IdentityKeypair, config: NodeConfig, app_handle: AppHandle) -> Result<String, String> {
@@ -77,7 +94,7 @@ impl NodeState {
             let (_, rx) = mpsc::channel(1);
             rx
         });
-        let event_handle = spawn_event_handler(event_rx, command_tx.clone(), app_handle);
+        let event_handle = spawn_event_handler(event_rx, command_tx.clone(), app_handle, self.pull_response_tx.clone());
 
         inner.node = Some(NodeHandle {
             peer_id,
@@ -168,6 +185,7 @@ fn spawn_event_handler(
     mut event_rx: mpsc::Receiver<NodeEvent>,
     command_tx: mpsc::Sender<NodeCommand>,
     app_handle: AppHandle,
+    pull_response_tx: broadcast::Sender<PullResponse>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Ensure the received manifests directory exists
@@ -438,6 +456,13 @@ fn spawn_event_handler(
                     }).await;
                 }
                 // Other events we don't handle yet
+                NodeEvent::ShardReceived { peer, response } => {
+                    // Forward to any waiting pull_shared_file command
+                    let _ = pull_response_tx.send(PullResponse {
+                        peer,
+                        response,
+                    });
+                }
                 _ => {}
             }
         }

@@ -13,7 +13,7 @@
 
   const navItems = [
     { id: 'files', icon: '📁', label: 'My Files' },
-    { id: 'shared', icon: '📨', label: 'Shared With Me' },
+    { id: 'shared', icon: '⬇️', label: 'Download' },
     { id: 'contacts', icon: '👤', label: 'Contacts' },
     { id: 'store', icon: '📦', label: 'Store' },
     { id: 'logs', icon: '📋', label: 'Logs' },
@@ -22,7 +22,6 @@
 
   function badgeFor(id: string): number {
     if (id === 'files') return fileCount;
-    if (id === 'shared') return sharedCount;
     if (id === 'logs') return logCount;
     return 0;
   }

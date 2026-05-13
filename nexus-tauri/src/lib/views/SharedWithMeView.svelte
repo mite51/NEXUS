@@ -1,159 +1,259 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { listReceivedFiles, decryptReceived, removeReceived, pickSaveLocation } from '../ipc';
-  import type { ReceivedFileInfo } from '../ipc';
+  import { invoke } from '@tauri-apps/api/core';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { showToast, passphrase } from '../stores/app';
-  import { formatBytes } from '../utils';
 
   export let vaultPath: string;
 
-  let files: ReceivedFileInfo[] = [];
+  let link = '';
+  let downloadPath = '';
+  let addToMyFiles = false;
+  let pulling = false;
+  let progress = '';
 
-  onMount(async () => {
-    await refresh();
-  });
-
-  async function refresh() {
-    try { files = await listReceivedFiles(); } catch (e) { console.error(e); }
+  async function pickFolder() {
+    const result = await open({
+      title: 'Choose download folder',
+      directory: true,
+    });
+    if (result) downloadPath = result as string;
   }
 
-  async function handleDecrypt(file: ReceivedFileInfo) {
-    const savePath = await pickSaveLocation(file.filename);
-    if (!savePath) return;
+  async function handlePull() {
+    if (!link.trim()) {
+      showToast('⚠ Paste a nexus:// link');
+      return;
+    }
+
+    // Parse nexus://<peer-id>/asset/<asset-id>
+    const match = link.trim().match(/^nexus:\/\/([^/]+)\/asset\/([a-f0-9]+)$/);
+    if (!match) {
+      showToast('⚠ Invalid link format. Expected: nexus://<peer-id>/asset/<asset-id>');
+      return;
+    }
+
+    pulling = true;
+    progress = 'Connecting to peer...';
 
     try {
-      const out = await decryptReceived(file.id, vaultPath, $passphrase, savePath);
-      showToast(`✓ Decrypted → ${out}`);
-      await refresh();
+      const result: any = await invoke('pull_shared_file', {
+        link: link.trim(),
+        vaultPath,
+        passphrase: $passphrase,
+        outputDir: addToMyFiles ? null : (downloadPath || null),
+        addToMyFiles,
+      });
+
+      progress = '';
+      showToast(`✓ Downloaded: ${result.filename} (${formatBytes(result.size)})`);
+      link = '';
     } catch (e: any) {
-      showToast(`Decrypt error: ${e}`);
+      progress = '';
+      showToast(`⚠ Pull failed: ${e}`);
+    } finally {
+      pulling = false;
     }
   }
 
-  async function handleRemove(id: string) {
-    try {
-      await removeReceived(id);
-      showToast('Removed');
-      await refresh();
-    } catch (e: any) {
-      showToast(`Error: ${e}`);
-    }
-  }
-
-  function timeAgo(ts: number): string {
-    const seconds = Math.floor((Date.now() - ts) / 1000);
-    if (seconds < 60) return 'just now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    return `${Math.floor(seconds / 86400)}d ago`;
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 </script>
 
-<div class="shared-view">
-  {#if files.length === 0}
-    <div class="empty" in:fade={{ duration: 200 }}>
-      <span class="icon">📨</span>
-      <p>No shared files yet</p>
-      <p class="hint">When peers send or share files with you, they'll appear here</p>
+<div class="download-view" in:fade={{ duration: 150 }}>
+  <div class="card">
+    <div class="header">
+      <span class="icon">⬇️</span>
+      <h2>Download Shared File</h2>
     </div>
-  {:else}
-    <div class="file-list">
-      {#each files as file, i (file.manifest_path)}
-        <div class="file-card" class:decrypted={file.decrypted}>
-          <div class="file-icon">
-            {#if file.has_share_grant}🔑{:else}📄{/if}
-          </div>
-          <div class="info">
-            <div class="filename">{file.filename}</div>
-            <div class="sender">From: {file.sender_did.slice(0, 20)}…</div>
-            <div class="meta">
-              {#if file.has_share_grant}
-                <span class="badge pre">PRE Shared</span>
-              {:else}
-                <span class="badge direct">Direct</span>
-              {/if}
-              · {timeAgo(file.received_at)}
-              {#if file.total_size}
-                · {formatBytes(file.total_size)} ({file.shard_count} shards)
-              {/if}
-              {#if file.decrypted}
-                · <span class="decrypted-badge">Decrypted ✓</span>
-              {/if}
-            </div>
-          </div>
-          <div class="actions">
-            {#if !file.decrypted}
-              <button class="decrypt-btn" on:click={() => handleDecrypt(file)}>
-                Decrypt
-              </button>
-            {:else}
-              <button class="decrypt-btn secondary" on:click={() => handleDecrypt(file)}>
-                Re-decrypt
-              </button>
-            {/if}
-            <button class="remove-btn" on:click={() => handleRemove(file.id)} title="Remove">✕</button>
-          </div>
-        </div>
-      {/each}
+
+    <p class="description">Paste a nexus:// link to download a file shared with you.</p>
+
+    <div class="field">
+      <label for="link-input">Share Link</label>
+      <input
+        id="link-input"
+        type="text"
+        bind:value={link}
+        placeholder="nexus://12D3KooW.../asset/abc123..."
+        disabled={pulling}
+        on:keydown={(e) => e.key === 'Enter' && handlePull()}
+      />
     </div>
-  {/if}
+
+    <div class="field">
+      <label>Download Location</label>
+      <div class="folder-row">
+        <input
+          type="text"
+          bind:value={downloadPath}
+          placeholder={addToMyFiles ? '(added to My Files)' : 'Downloads folder (default)'}
+          disabled={pulling || addToMyFiles}
+        />
+        <button class="browse-btn" on:click={pickFolder} disabled={pulling || addToMyFiles}>
+          Browse
+        </button>
+      </div>
+    </div>
+
+    <div class="field checkbox-field">
+      <label class="checkbox-label">
+        <input type="checkbox" bind:checked={addToMyFiles} disabled={pulling} />
+        <span>Add to My Files</span>
+        <span class="hint">(encrypt &amp; store locally instead of saving to disk)</span>
+      </label>
+    </div>
+
+    {#if progress}
+      <div class="progress" in:fade={{ duration: 100 }}>
+        <span class="spinner">⏳</span>
+        {progress}
+      </div>
+    {/if}
+
+    <button
+      class="pull-btn"
+      on:click={handlePull}
+      disabled={pulling || !link.trim()}
+    >
+      {#if pulling}
+        Pulling...
+      {:else}
+        Download
+      {/if}
+    </button>
+  </div>
 </div>
 
 <style>
-  .shared-view { height: 100%; display: flex; flex-direction: column; }
-  .empty {
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    flex: 1; gap: 8px; color: var(--text-secondary);
+  .download-view {
+    height: 100%;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 48px 24px;
   }
-  .empty .icon { font-size: 48px; }
-  .empty p { font-size: 14px; }
-  .empty .hint { font-size: 12px; }
-  .file-list {
-    display: flex; flex-direction: column; gap: 8px;
-    flex: 1; overflow-y: auto;
-  }
-  .file-card {
-    display: flex; align-items: center; gap: 12px;
-    padding: 14px 16px;
+  .card {
+    width: 100%;
+    max-width: 520px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 12px;
+    padding: 32px;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .header .icon { font-size: 24px; }
+  .header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+  }
+  .description {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 24px;
+  }
+  .field {
+    margin-bottom: 16px;
+  }
+  .field label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .field input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    outline: none;
     transition: border-color 0.15s;
   }
-  .file-card:hover { border-color: var(--accent); }
-  .file-card.decrypted { opacity: 0.7; }
-  .file-icon { font-size: 24px; flex-shrink: 0; }
-  .info { flex: 1; min-width: 0; }
-  .filename { font-size: 14px; font-weight: 600; }
-  .sender {
-    font-size: 11px; color: var(--text-secondary);
-    font-family: 'JetBrains Mono', monospace;
+  .field input[type="text"]:focus {
+    border-color: var(--accent);
   }
-  .meta { font-size: 11px; color: var(--text-secondary); margin-top: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-  .badge {
-    display: inline-block; font-size: 10px;
-    padding: 1px 6px; border-radius: 3px;
+  .field input[type="text"]:disabled {
+    opacity: 0.5;
   }
-  .badge.pre { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
-  .badge.direct { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
-  .decrypted-badge { color: var(--success); }
-  .actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-  .decrypt-btn {
-    padding: 6px 14px; border-radius: 6px;
-    background: var(--accent); color: white;
-    border: none; font-size: 12px; cursor: pointer;
+  .folder-row {
+    display: flex;
+    gap: 8px;
   }
-  .decrypt-btn:hover { opacity: 0.85; }
-  .decrypt-btn.secondary {
-    background: transparent; color: var(--accent);
-    border: 1px solid var(--accent);
+  .folder-row input { flex: 1; }
+  .browse-btn {
+    padding: 10px 14px;
+    font-size: 12px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
   }
-  .remove-btn {
-    background: none; border: none; cursor: pointer;
-    color: var(--text-secondary); font-size: 14px; opacity: 0.5;
+  .browse-btn:hover:not(:disabled) { background: var(--text-secondary); color: var(--bg); }
+  .browse-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .checkbox-field { margin-top: 4px; }
+  .checkbox-label {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+  }
+  .checkbox-label .hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    background: rgba(139, 92, 246, 0.08);
+    border-radius: 6px;
+  }
+  .spinner {
+    animation: spin 1s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pull-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 8px;
     transition: opacity 0.15s;
   }
-  .remove-btn:hover { opacity: 1; }
+  .pull-btn:hover:not(:disabled) { opacity: 0.85; }
+  .pull-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

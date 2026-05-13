@@ -803,6 +803,196 @@ pub fn set_share_public(manifest_path: &str, public: bool, vault_path: &str, pas
     store.set_public(&asset_id, public)
 }
 
+#[derive(Serialize)]
+pub struct PullResult {
+    pub filename: String,
+    pub size: usize,
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn pull_shared_file(
+    link: &str,
+    vault_path: &str,
+    passphrase: &str,
+    output_dir: Option<&str>,
+    add_to_my_files: bool,
+    state: State<'_, crate::node_state::NodeState>,
+    app_handle: tauri::AppHandle,
+) -> Result<PullResult, String> {
+    use nexus_core::storage::AssetStore;
+    use nexus_core::manifest::NexusManifest;
+    use nexus_core::crypto::{decrypt_data, encrypt_data, generate_dek};
+    use nexus_core::storage::shard;
+    use nexus_core::network::NodeCommand;
+    use nexus_core::network::protocol::NexusResponse;
+
+    // Parse link
+    let (target_peer_str, asset_id) = AssetStore::parse_share_link(link)
+        .ok_or_else(|| format!("Invalid share link: {}", link))?;
+
+    let (keypair, pre_kp) = load_keys(vault_path, passphrase)?;
+    let my_did = keypair.did();
+    let signature = keypair.sign(asset_id.as_bytes());
+
+    let target_peer: nexus_core::network::PeerId = target_peer_str.parse()
+        .map_err(|e| format!("Invalid peer ID: {}", e))?;
+
+    // Subscribe to pull responses before sending request
+    let mut pull_rx = state.subscribe_pull_responses();
+
+    // Get node command channel
+    let cmd_tx = state.command_tx().await
+        .ok_or("Node not running")?;
+
+    // Send pull request
+    cmd_tx.send(NodeCommand::PullAsset {
+        peer: target_peer,
+        asset_id: asset_id.clone(),
+        requester_did: my_did,
+        signature,
+    }).await.map_err(|e| format!("Failed to send pull: {}", e))?;
+
+    // Wait for response (timeout 60s)
+    let response = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            match pull_rx.recv().await {
+                Ok(pr) => return Ok(pr.response),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(e) => return Err(format!("Channel error: {}", e)),
+            }
+        }
+    }).await
+    .map_err(|_| "Pull timed out (60s)".to_string())?
+    .map_err(|e| e)?;
+
+    match response {
+        NexusResponse::Asset { asset_id: _, rfrag, manifest, shards } => {
+            // Parse rfrag and manifest
+            let grant: nexus_core::manifest::ShareGrant = serde_json::from_slice(&rfrag)
+                .map_err(|e| format!("Invalid rfrag: {}", e))?;
+            let nexus_manifest: NexusManifest = serde_json::from_slice(&manifest)
+                .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+            let filename = nexus_manifest.shards.filename.clone()
+                .unwrap_or_else(|| "unnamed".into());
+
+            // Verify shard CIDs
+            if shards.len() != nexus_manifest.shards.shards.len() {
+                return Err(format!("Shard count mismatch: {} vs {}",
+                    shards.len(), nexus_manifest.shards.shards.len()));
+            }
+            for (expected_cid, shard_data) in nexus_manifest.shards.shards.iter().zip(&shards) {
+                let computed = nexus_core::storage::shard::compute_cid(shard_data);
+                let computed_hex: String = computed.iter().map(|b| format!("{:02x}", b)).collect();
+                if computed_hex != *expected_cid {
+                    return Err(format!("CID mismatch: expected {}, got {}", expected_cid, computed_hex));
+                }
+            }
+
+            // Decrypt DEK via PRE
+            let decrypt_kp = if grant.recipient == nexus_core::crypto::pre::PUBLIC_DID {
+                nexus_core::crypto::pre::public_pre_keypair()
+            } else {
+                pre_kp.clone()
+            };
+            let dek = decrypt_kp.decrypt_dek_reencrypted(
+                &nexus_manifest.encrypted_dek,
+                &grant.cfrags,
+                &nexus_manifest.owner_pre_pk,
+                &grant.verifying_key,
+            ).map_err(|e| format!("PRE decryption failed: {}", e))?;
+
+            // Reassemble shards
+            let shard_objs: Vec<nexus_core::storage::shard::Shard> = nexus_manifest.shards.shards.iter()
+                .zip(shards)
+                .map(|(cid_hex, data)| {
+                    let cid_bytes: Vec<u8> = (0..cid_hex.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&cid_hex[i..i+2], 16).unwrap())
+                        .collect();
+                    nexus_core::storage::shard::Shard { cid: cid_bytes, data }
+                })
+                .collect();
+
+            let encrypted_body = shard::reassemble(&nexus_manifest.shards, &shard_objs)
+                .ok_or("Failed to reassemble shards")?;
+
+            let plaintext = decrypt_data(&encrypted_body, &dek)
+                .map_err(|_| "Decryption failed".to_string())?;
+
+            let size = plaintext.len();
+
+            if add_to_my_files {
+                // Re-encrypt with our own key and store as a local asset
+                let new_dek = generate_dek();
+                let new_encrypted = encrypt_data(&plaintext, &new_dek)
+                    .map_err(|e| format!("Re-encryption failed: {}", e))?;
+                let new_encrypted_dek = pre_kp.encrypt_dek(&new_dek)
+                    .map_err(|e| format!("DEK encryption failed: {}", e))?;
+
+                let (new_shard_manifest, new_shard_objs) = nexus_core::storage::shard_data(&new_encrypted, nexus_core::storage::DEFAULT_SHARD_SIZE);
+                let shard_store = nexus_core::storage::ShardStore::open(".nexus-store")
+                    .map_err(|e| format!("Failed to open shard store: {}", e))?;
+                for s in &new_shard_objs {
+                    shard_store.put(s).ok();
+                }
+
+                let new_manifest = NexusManifest {
+                    owner: keypair.did(),
+                    encrypted_dek: new_encrypted_dek,
+                    owner_pre_pk: pre_kp.public_key(),
+                    shards: new_shard_manifest,
+                };
+
+                let manifest_bytes = serde_json::to_vec_pretty(&new_manifest)
+                    .map_err(|e| format!("Manifest serialization failed: {}", e))?;
+
+                let asset_store = AssetStore::open(".nexus-store")
+                    .map_err(|e| format!("Failed to open asset store: {}", e))?;
+                asset_store.put_manifest(&manifest_bytes)?;
+
+                // Also save manifest to manifests/ for the file list
+                let manifest_dir = Path::new(".nexus-store").join("manifests");
+                fs::create_dir_all(&manifest_dir).ok();
+                let manifest_path = manifest_dir.join(format!("{}.json",
+                    AssetStore::compute_asset_id(&manifest_bytes)));
+                fs::write(&manifest_path, &manifest_bytes).ok();
+
+                Ok(PullResult {
+                    filename,
+                    size,
+                    path: manifest_path.to_string_lossy().into(),
+                })
+            } else {
+                // Save to download folder
+                let dir = output_dir
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        dirs::download_dir()
+                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+                            .to_string_lossy().into()
+                    });
+                let out_path = Path::new(&dir).join(&filename);
+                fs::write(&out_path, &plaintext)
+                    .map_err(|e| format!("Failed to write file: {}", e))?;
+
+                Ok(PullResult {
+                    filename,
+                    size,
+                    path: out_path.to_string_lossy().into(),
+                })
+            }
+        }
+        NexusResponse::AssetDenied { asset_id, reason } => {
+            Err(format!("Access denied for {}: {}", &asset_id[..16.min(asset_id.len())], reason))
+        }
+        other => {
+            Err(format!("Unexpected response: {:?}", other))
+        }
+    }
+}
+
 const RECEIVED_FILES_PATH: &str = ".nexus-received.json";
 
 #[derive(Serialize)]
