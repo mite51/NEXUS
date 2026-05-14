@@ -486,7 +486,13 @@ async fn handle_swarm_event(
             let _ = event_tx.send(NodeEvent::Listening(address)).await;
         }
         SwarmEvent::Behaviour(NexusBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
-            for (peer_id, _addr) in peers {
+            for (peer_id, addr) in peers {
+                // Add discovered address so request-response can reach this peer
+                swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                // Dial the peer to establish a connection
+                if !swarm.is_connected(&peer_id) {
+                    let _ = swarm.dial(addr);
+                }
                 let _ = event_tx.send(NodeEvent::PeerDiscovered(peer_id)).await;
             }
         }
