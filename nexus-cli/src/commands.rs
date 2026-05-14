@@ -565,13 +565,78 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
             }
             Some(NodeEvent::PullAssetRequested { peer, asset_id, requester_did, channel, .. }) => {
                 println!("  📥 Pull request from {} for asset {} (DID: {})", &peer.to_string()[..16], &asset_id[..16], requester_did);
-                // TODO: implement pull serving from CLI node
+
+                let asset_store = AssetStore::open(".nexus-store").ok();
+                let response = if let Some(ref store) = asset_store {
+                    // Check if asset exists
+                    match store.get_manifest(&asset_id) {
+                        Ok(Some(manifest_bytes)) => {
+                            // Check authorization: is it public, or does requester have an rfrag?
+                            let is_public = store.is_public(&asset_id).unwrap_or(false);
+                            let rfrag = if is_public {
+                                store.get_rfrag(&asset_id, pre::PUBLIC_DID).ok().flatten()
+                            } else {
+                                store.get_rfrag(&asset_id, &requester_did).ok().flatten()
+                            };
+
+                            if let Some(rfrag_bytes) = rfrag {
+                                // Load all shards
+                                let manifest: NexusManifest = serde_json::from_slice(&manifest_bytes).unwrap();
+                                let shard_store = nexus_core::storage::ShardStore::open(".nexus-store").ok();
+                                let mut shard_data_vec: Vec<Vec<u8>> = Vec::new();
+                                let mut all_found = true;
+                                if let Some(ref ss) = shard_store {
+                                    for cid in &manifest.shards.shards {
+                                        if let Ok(Some(shard)) = ss.get(cid) {
+                                            shard_data_vec.push(shard.data);
+                                        } else {
+                                            all_found = false;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    all_found = false;
+                                }
+
+                                if all_found {
+                                    println!("    ✅ Serving asset ({} shards)", shard_data_vec.len());
+                                    nexus_core::network::protocol::NexusResponse::Asset {
+                                        asset_id,
+                                        rfrag: rfrag_bytes,
+                                        manifest: manifest_bytes,
+                                        shards: shard_data_vec,
+                                    }
+                                } else {
+                                    nexus_core::network::protocol::NexusResponse::AssetDenied {
+                                        asset_id,
+                                        reason: "Some shards missing locally".into(),
+                                    }
+                                }
+                            } else {
+                                println!("    ❌ Denied (no access)");
+                                nexus_core::network::protocol::NexusResponse::AssetDenied {
+                                    asset_id,
+                                    reason: "Unauthorized".into(),
+                                }
+                            }
+                        }
+                        _ => {
+                            nexus_core::network::protocol::NexusResponse::AssetDenied {
+                                asset_id,
+                                reason: "Asset not found".into(),
+                            }
+                        }
+                    }
+                } else {
+                    nexus_core::network::protocol::NexusResponse::AssetDenied {
+                        asset_id,
+                        reason: "Store unavailable".into(),
+                    }
+                };
+
                 let _ = node.command_tx.send(nexus_core::network::NodeCommand::RespondShard {
                     channel,
-                    response: nexus_core::network::protocol::NexusResponse::AssetDenied {
-                        asset_id,
-                        reason: "CLI node does not serve assets yet".into(),
-                    },
+                    response,
                 }).await;
             }
             None => {
@@ -1311,6 +1376,52 @@ pub struct JoinResponse {
     pub pre_public_key_hex: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_addrs: Option<Vec<String>>,
+}
+
+pub fn make_public(asset_id: &str, vault_path: &str) -> Result<(), String> {
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (_keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    let store = AssetStore::open(".nexus-store")
+        .map_err(|e| format!("Failed to open store: {}", e))?;
+
+    let manifest_bytes = store.get_manifest(asset_id)
+        .map_err(|e| format!("Failed to get manifest: {}", e))?
+        .ok_or_else(|| format!("Asset {} not found in store", asset_id))?;
+
+    let manifest: NexusManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+
+    // Generate public rfrag
+    let public_kp = pre::public_pre_keypair();
+    let signer = PreSigner::new();
+    let vk = signer.verifying_key();
+    let kfrags = signer.generate_kfrags(&pre_kp, &public_kp.public_key(), 1, 1)
+        .map_err(|e| format!("kfrag generation failed: {}", e))?;
+
+    let cfrag = pre::reencrypt(
+        &manifest.encrypted_dek,
+        &kfrags[0],
+        &pre_kp.public_key(),
+        &public_kp.public_key(),
+        &vk,
+    ).map_err(|e| format!("Re-encryption failed: {}", e))?;
+
+    let grant = ShareGrant {
+        recipient: pre::PUBLIC_DID.to_string(),
+        recipient_pre_pk: public_kp.public_key(),
+        cfrags: vec![cfrag],
+        verifying_key: vk,
+        manifest_ref: String::new(),
+    };
+
+    let rfrag_bytes = serde_json::to_vec(&grant)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+    store.put_rfrag(asset_id, pre::PUBLIC_DID, &rfrag_bytes)?;
+    store.set_public(asset_id, true)?;
+
+    println!("\u{2713} Asset {} marked public", asset_id);
+    Ok(())
 }
 
 pub fn create_join_request(vault_path: &str, name: &str, include_pre: bool) -> Result<(), String> {

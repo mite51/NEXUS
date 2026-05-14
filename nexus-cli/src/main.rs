@@ -155,6 +155,13 @@ enum Commands {
         #[command(subcommand)]
         action: StoreAction,
     },
+    /// Mark an asset as public (generates public PRE rfrag)
+    MakePublic {
+        /// Asset ID (hex hash)
+        asset_id: String,
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
     /// Create a join request to exchange contacts
     CreateJoinRequest {
         #[arg(long, default_value = "vault.json")]
@@ -261,6 +268,9 @@ fn main() {
             StoreAction::Import { manifest, from, dir } => commands::store_import(&manifest, &from, &dir),
             StoreAction::Verify { dir } => commands::store_verify(&dir),
         },
+        Commands::MakePublic { asset_id, vault } => {
+            commands::make_public(&asset_id, &vault)
+        }
         Commands::CreateJoinRequest { vault, name, include_pre } => {
             commands::create_join_request(&vault, &name, include_pre)
         }
