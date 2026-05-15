@@ -845,6 +845,19 @@ pub async fn pull_shared_file(
     let cmd_tx = state.command_tx().await
         .ok_or("Node not running")?;
 
+    // Try to dial target peer through configured relay circuits
+    // (needed when there's no direct connection to the peer)
+    let saved_config = get_config();
+    for relay_addr_str in &saved_config.relay_servers {
+        // Build circuit address: <relay-addr>/p2p-circuit/p2p/<target-peer>
+        let circuit_addr_str = format!("{}/p2p-circuit/p2p/{}", relay_addr_str, target_peer);
+        if let Ok(circuit_addr) = circuit_addr_str.parse::<nexus_core::network::Multiaddr>() {
+            let _ = cmd_tx.send(NodeCommand::Dial(circuit_addr)).await;
+        }
+    }
+    // Give the relay circuit time to establish
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
     // Send pull request
     cmd_tx.send(NodeCommand::PullAsset {
         peer: target_peer,
