@@ -1147,7 +1147,7 @@ pub async fn start_node(
         ],
         bootstrap_peers,
         mdns_enabled: true,
-        relay_servers: vec![],
+        relay_servers: saved.relay_servers.clone(),
         telemetry_enabled: true,
         telemetry_dir: None,
     };

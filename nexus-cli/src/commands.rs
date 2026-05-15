@@ -126,13 +126,29 @@ pub fn encrypt(file_path: &str, output_dir: &str, vault_path: &str) -> Result<()
         encrypted_dek,
     };
 
-    let manifest_path = Path::new(output_dir).join(format!("{}.nexus", filename));
     let manifest_json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("Manifest serialization failed: {}", e))?;
-    fs::write(&manifest_path, manifest_json)
+    let manifest_bytes = manifest_json.as_bytes();
+
+    // Write manifest to output dir (for user)
+    let manifest_path = Path::new(output_dir).join(format!("{}.nexus", filename));
+    fs::write(&manifest_path, &manifest_bytes)
         .map_err(|e| format!("Failed to write manifest: {}", e))?;
 
+    // Also register in AssetStore for P2P serving (make-public, node)
+    let asset_store = AssetStore::open(".nexus-store").ok();
+    let asset_id = if let Some(ref astore) = asset_store {
+        let id = astore.put_manifest(manifest_bytes)
+            .map_err(|e| format!("Failed to store manifest in asset store: {}", e))?;
+        Some(id)
+    } else {
+        None
+    };
+
     println!("✓ Encrypted: {}", filename);
+    if let Some(ref id) = asset_id {
+        println!("  Asset ID: {}", id);
+    }
     println!("  Shards: {} ({} bytes each)", shards.len(), DEFAULT_SHARD_SIZE);
     println!("  Manifest: {}", manifest_path.display());
     if store.is_some() {
