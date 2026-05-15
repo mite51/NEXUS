@@ -16,6 +16,7 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="share-overlay" on:click|self={() => dispatch('close')}>
   <div class="share-panel">
     <div class="share-header">
@@ -24,7 +25,7 @@
     </div>
 
     <div class="share-section">
-      <label>Share Link</label>
+      <span class="section-label">Share Link</span>
       <div class="link-row">
         <code class="link-text">{info.share_link}</code>
         <button class="copy-btn" on:click={copyLink}>
@@ -35,7 +36,7 @@
     </div>
 
     <div class="share-section">
-      <label>Access</label>
+      <span class="section-label">Access</span>
       <div class="access-toggle">
         <button
           class="toggle-btn"
@@ -57,7 +58,7 @@
 
     {#if !info.public}
       <div class="share-section">
-        <label>Authorized Users ({info.shared_with.length})</label>
+        <span class="section-label">Authorized Users ({info.shared_with.length})</span>
         {#if info.shared_with.length === 0}
           <p class="empty">No users yet. Add a contact to grant access.</p>
         {:else}
@@ -114,7 +115,7 @@
   .share-section {
     margin-bottom: 20px;
   }
-  .share-section label {
+  .share-section .section-label {
     font-size: 12px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-secondary, #888);

@@ -33,6 +33,7 @@
   <div class="card">
     <h1>⚡ NEXUS</h1>
     <p>Unlock your vault</p>
+    <!-- svelte-ignore a11y_autofocus -->
     <input type="password" placeholder="Passphrase" bind:value={pass}
            on:keydown={(e) => e.key === 'Enter' && handleUnlock()} autofocus />
     <button on:click={handleUnlock} disabled={loading}>

@@ -85,9 +85,10 @@
     </div>
 
     <div class="field">
-      <label>Download Location</label>
+      <label for="download-location">Download Location</label>
       <div class="folder-row">
         <input
+          id="download-location"
           type="text"
           bind:value={downloadPath}
           placeholder={addToMyFiles ? '(added to My Files)' : 'Downloads folder (default)'}

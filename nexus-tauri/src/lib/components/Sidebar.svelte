@@ -5,7 +5,6 @@
   export let view: string;
   export let online: boolean;
   export let fileCount: number = 0;
-  export let sharedCount: number = 0;
 
   const dispatch = createEventDispatcher();
 
