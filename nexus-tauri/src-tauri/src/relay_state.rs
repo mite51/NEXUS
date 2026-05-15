@@ -89,6 +89,8 @@ impl RelayState {
         let mut server = RelayServer::start(keypair, config).await
             .map_err(|e| format!("Failed to start relay: {}", e))?;
 
+        eprintln!("[relay_state] Relay started! PeerId={}, port={}", peer_id, port);
+
                 let stats = Arc::new(Mutex::new(RelayStats {
             running: true,
             peer_id: Some(peer_id.to_string()),

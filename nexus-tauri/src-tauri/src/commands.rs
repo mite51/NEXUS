@@ -1419,8 +1419,11 @@ pub async fn start_relay(
     max_reservations_per_peer: Option<u32>,
     state: State<'_, RelayState>,
 ) -> Result<String, String> {
+    let actual_port = port.unwrap_or(4002);
+    eprintln!("[start_relay] port={}, max_circuits={}, max_res_per_peer={}",
+        actual_port, max_circuits.unwrap_or(128), max_reservations_per_peer.unwrap_or(4));
     state.start(
-        port.unwrap_or(4002),
+        actual_port,
         max_circuits.unwrap_or(128),
         max_reservations_per_peer.unwrap_or(4),
     ).await
