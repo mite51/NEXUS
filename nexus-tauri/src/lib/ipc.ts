@@ -296,13 +296,11 @@ export interface RelayInfo {
 }
 
 export async function startRelay(
-  vaultPath: string,
-  passphrase: string,
   port?: number,
   maxCircuits?: number,
   maxReservationsPerPeer?: number,
 ): Promise<string> {
-  return invoke('start_relay', { vaultPath, passphrase, port, maxCircuits, maxReservationsPerPeer });
+  return invoke('start_relay', { port, maxCircuits, maxReservationsPerPeer });
 }
 
 export async function stopRelay(): Promise<void> {

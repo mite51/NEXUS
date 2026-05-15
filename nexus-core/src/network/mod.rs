@@ -24,3 +24,4 @@ pub use telemetry::{TelemetryCollector, TelemetryStats, ConnectivityEvent, NatSt
 pub use relay_server::{RelayServer, RelayConfig, RelayServerEvent, detect_public_ip};
 pub use libp2p::PeerId;
 pub use libp2p::Multiaddr;
+pub use libp2p::identity::Keypair as Libp2pKeypair;

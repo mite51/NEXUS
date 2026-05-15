@@ -1414,16 +1414,12 @@ pub fn import_file_bundle(bundle_path: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn start_relay(
-    vault_path: &str,
-    passphrase: &str,
     port: Option<u16>,
     max_circuits: Option<u32>,
     max_reservations_per_peer: Option<u32>,
     state: State<'_, RelayState>,
 ) -> Result<String, String> {
-    let (identity, _pre_kp) = load_keys(vault_path, passphrase)?;
     state.start(
-        identity,
         port.unwrap_or(4002),
         max_circuits.unwrap_or(128),
         max_reservations_per_peer.unwrap_or(4),

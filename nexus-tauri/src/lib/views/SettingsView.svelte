@@ -98,10 +98,9 @@
   }
 
   async function handleStartRelay() {
-    if (!$passphrase) { showToast('⚠ Unlock vault first'); return; }
     relayStarting = true;
     try {
-      const peerId = await startRelay('vault.json', $passphrase, parseInt(relayPort) || 4002, parseInt(relayMaxCircuits) || 128, 4);
+      const peerId = await startRelay(parseInt(relayPort) || 4002, parseInt(relayMaxCircuits) || 128, 4);
       addLog('success', 'Relay', `Relay started`, `PeerId: ${peerId}`);
       showToast(`Relay started: ${peerId.slice(0, 16)}…`);
       await refreshRelay();

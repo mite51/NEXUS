@@ -2,8 +2,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use serde::Serialize;
 
-use nexus_core::identity::IdentityKeypair;
-use nexus_core::network::{RelayServer, RelayConfig, RelayServerEvent, PeerId};
+use nexus_core::network::{RelayServer, RelayConfig, RelayServerEvent, PeerId, Libp2pKeypair};
 
 /// Shared relay server state managed by Tauri
 pub struct RelayState {
@@ -49,7 +48,6 @@ impl RelayState {
 
     pub async fn start(
         &self,
-        identity: IdentityKeypair,
         port: u16,
         max_circuits: u32,
         max_reservations_per_peer: u32,
@@ -59,7 +57,23 @@ impl RelayState {
             return Err("Relay already running".into());
         }
 
-        let keypair = identity.to_libp2p_keypair();
+        // Relay uses its own identity separate from the user vault.
+        // This avoids PeerId collision when the node and relay share a vault.
+        let key_path = ".nexus-relay-key";
+        let keypair = if std::path::Path::new(key_path).exists() {
+            let bytes = std::fs::read(key_path)
+                .map_err(|e| format!("Failed to read relay key: {}", e))?;
+            Libp2pKeypair::from_protobuf_encoding(&bytes)
+                .map_err(|e| format!("Failed to decode relay key: {}", e))?
+        } else {
+            let kp = Libp2pKeypair::generate_ed25519();
+            let bytes = kp.to_protobuf_encoding()
+                .map_err(|e| format!("Failed to encode relay key: {}", e))?;
+            std::fs::write(key_path, &bytes)
+                .map_err(|e| format!("Failed to write relay key: {}", e))?;
+            eprintln!("  Generated new relay identity (saved to {})", key_path);
+            kp
+        };
         let peer_id = keypair.public().to_peer_id();
 
         let config = RelayConfig {
