@@ -138,8 +138,6 @@ enum Commands {
         vault: String,
     },
     Relay {
-        #[arg(long, default_value = "vault.json")]
-        vault: String,
         /// Listen port (TCP and QUIC)
         #[arg(long, default_value_t = 4001)]
         port: u16,
@@ -258,9 +256,9 @@ fn main() {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(commands::pull(&link, output.as_deref(), addr.as_deref(), &vault))
         }
-        Commands::Relay { vault, port, max_circuits, max_reservations_per_peer } => {
+        Commands::Relay { port, max_circuits, max_reservations_per_peer } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(commands::run_relay(&vault, port, max_circuits, max_reservations_per_peer))
+            rt.block_on(commands::run_relay("", port, max_circuits, max_reservations_per_peer))
         }
         Commands::Store { action } => match action {
             StoreAction::Stats { dir } => commands::store_stats(&dir),

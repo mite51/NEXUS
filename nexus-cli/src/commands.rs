@@ -1265,16 +1265,29 @@ pub fn store_verify(dir: &str) -> Result<(), String> {
 // --- Relay Server ---
 
 pub async fn run_relay(
-    vault_path: &str,
+    _vault_path: &str,
     port: u16,
     max_circuits: u32,
     max_reservations_per_peer: u32,
 ) -> Result<(), String> {
-    let passphrase = prompt_passphrase("Vault passphrase: ")?;
-    let (keypair, _pre_kp) = load_keys(vault_path, &passphrase)?;
-
-    // Convert identity key to libp2p keypair
-    let libp2p_keypair = keypair.to_libp2p_keypair();
+    // Relay uses its own identity separate from the user vault.
+    // This avoids PeerId collision when the node and relay share a vault.
+    // Persist the relay key to .nexus-relay-key so PeerId is stable across restarts.
+    let key_path = ".nexus-relay-key";
+    let libp2p_keypair = if std::path::Path::new(key_path).exists() {
+        let bytes = std::fs::read(key_path)
+            .map_err(|e| format!("Failed to read relay key: {}", e))?;
+        libp2p::identity::Keypair::from_protobuf_encoding(&bytes)
+            .map_err(|e| format!("Failed to decode relay key: {}", e))?
+    } else {
+        let kp = libp2p::identity::Keypair::generate_ed25519();
+        let bytes = kp.to_protobuf_encoding()
+            .map_err(|e| format!("Failed to encode relay key: {}", e))?;
+        std::fs::write(key_path, &bytes)
+            .map_err(|e| format!("Failed to write relay key: {}", e))?;
+        eprintln!("  Generated new relay identity (saved to {})", key_path);
+        kp
+    };
 
     let config = RelayConfig {
         listen_addrs: vec![
