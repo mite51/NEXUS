@@ -24,6 +24,9 @@
   let nodeInfo: NodeInfo = { running: false, peer_id: null, listen_addrs: [], connected_peers: [] };
   let nodeStarting = false;
   let refreshTimer: ReturnType<typeof setInterval>;
+  let newRelayServer: string = '';
+
+  $: relayServerList = relayServers.split('\n').map(s => s.trim()).filter(Boolean);
 
   onMount(async () => {
     try {
@@ -146,6 +149,21 @@
     saving = false;
   }
 
+  async function handleUseLocalRelay() {
+    if (!relayInfo?.running || !relayInfo?.peer_id) return;
+    // Build multiaddr entries from relay listen addresses
+    const addrs = relayInfo.stats.listen_addrs.map(
+      (addr: string) => `${addr}/p2p/${relayInfo!.peer_id}`
+    );
+    if (addrs.length === 0) {
+      showToast('⚠ Relay has no listen addresses yet');
+      return;
+    }
+    relayServers = addrs.join('\n');
+    await handleSave();
+    showToast('✓ Node configured to use local relay');
+  }
+
   async function handleExportDid() {
     const id = $identity;
     if (id) { await navigator.clipboard.writeText(id.did); showToast('✓ DID copied to clipboard'); }
@@ -159,6 +177,35 @@
   async function handleExportPeerId() {
     const id = $identity;
     if (id?.peer_id) { await navigator.clipboard.writeText(id.peer_id); showToast('✓ Peer ID copied'); }
+  }
+
+  async function copyRelayPeerId() {
+    if (relayInfo?.peer_id) {
+      await navigator.clipboard.writeText(relayInfo.peer_id);
+      showToast('✓ Relay PeerId copied');
+    }
+  }
+
+  async function copyRelayAddr(addr: string) {
+    const full = `${addr}/p2p/${relayInfo?.peer_id ?? ''}`;
+    await navigator.clipboard.writeText(full);
+    showToast('✓ Address copied');
+  }
+
+  function addRelayServer() {
+    const trimmed = newRelayServer.trim();
+    if (!trimmed) return;
+    if (relayServerList.includes(trimmed)) {
+      showToast('⚠ Already in list');
+      return;
+    }
+    relayServers = [...relayServerList, trimmed].join('\n');
+    newRelayServer = '';
+  }
+
+  function removeRelayServer(index: number) {
+    const updated = relayServerList.filter((_, i) => i !== index);
+    relayServers = updated.join('\n');
   }
 </script>
 
@@ -309,10 +356,33 @@
     <div class="setting-row">
       <div class="setting-info">
         <div class="setting-label">Relay Servers</div>
-        <div class="setting-desc">For NAT traversal (one per line)</div>
+        <div class="setting-desc">For NAT traversal — node connects to these relays</div>
       </div>
     </div>
-    <textarea class="multi-input" placeholder="/ip4/1.2.3.4/tcp/4001/p2p/12D3Koo..." bind:value={relayServers}></textarea>
+
+    <!-- Relay server list -->
+    <div class="relay-server-list">
+      {#if relayServerList.length === 0}
+        <div class="muted" style="padding: 8px; font-size: 11px;">No relay servers configured.</div>
+      {:else}
+        {#each relayServerList as addr, i}
+          <div class="relay-server-entry">
+            <span class="relay-server-addr">{addr}</span>
+            <button class="remove-btn" on:click={() => removeRelayServer(i)} on:keydown={(e) => { if (e.key === 'Enter') removeRelayServer(i); }} title="Remove">✕</button>
+          </div>
+        {/each}
+      {/if}
+    </div>
+    <div class="add-relay-row">
+      <input
+        type="text"
+        class="add-relay-input"
+        placeholder="/ip4/1.2.3.4/tcp/4001/p2p/12D3Koo..."
+        bind:value={newRelayServer}
+        on:keydown={(e) => { if (e.key === 'Enter') addRelayServer(); }}
+      />
+      <button class="add-btn" on:click={addRelayServer}>+ Add</button>
+    </div>
 
     <div class="setting-row">
       <div class="setting-info">
@@ -345,18 +415,23 @@
           {relayInfo?.running ? 'Running' : 'Stopped'}
         </div>
         {#if relayInfo?.running && relayInfo?.peer_id}
-          <div class="setting-value mono truncated">{relayInfo.peer_id}</div>
+          <div class="setting-value mono relay-peer-id">{relayInfo.peer_id}</div>
         {/if}
       </div>
-      {#if relayInfo?.running}
-        <button class="stop-btn" on:click={handleStopRelay} disabled={relayStopping}>
-          {relayStopping ? 'Stopping…' : '⏹ Stop'}
-        </button>
-      {:else}
-        <button class="start-btn" on:click={handleStartRelay} disabled={relayStarting}>
-          {relayStarting ? 'Starting…' : '▶ Start'}
-        </button>
-      {/if}
+      <div class="btn-group">
+        {#if relayInfo?.running && relayInfo?.peer_id}
+          <button class="copy-btn" on:click={copyRelayPeerId}>Copy ID</button>
+        {/if}
+        {#if relayInfo?.running}
+          <button class="stop-btn" on:click={handleStopRelay} disabled={relayStopping}>
+            {relayStopping ? 'Stopping…' : '⏹ Stop'}
+          </button>
+        {:else}
+          <button class="start-btn" on:click={handleStartRelay} disabled={relayStarting}>
+            {relayStarting ? 'Starting…' : '▶ Start'}
+          </button>
+        {/if}
+      </div>
     </div>
 
     <!-- Running details -->
@@ -388,9 +463,20 @@
       {#if relayInfo.stats.listen_addrs.length > 0}
         <div class="subsection-label">Listening On</div>
         {#each relayInfo.stats.listen_addrs as addr}
-          <div class="setting-value mono" style="font-size: 10px; padding: 1px 0;">{addr}/p2p/{relayInfo.peer_id}</div>
+          <div class="relay-addr-row">
+            <span class="relay-addr-text">{addr}/p2p/{relayInfo.peer_id}</span>
+            <button class="copy-btn-sm" on:click={() => copyRelayAddr(addr)} on:keydown={(e) => { if (e.key === 'Enter') copyRelayAddr(addr); }} title="Copy full address">📋</button>
+          </div>
         {/each}
       {/if}
+
+      <!-- Use This Relay button -->
+      <div class="use-relay-row">
+        <button class="use-relay-btn" on:click={handleUseLocalRelay}>
+          📡 Use This Relay for Node
+        </button>
+        <span class="save-hint">Sets relay addresses in node config & saves</span>
+      </div>
     {/if}
 
     <!-- Config -->
@@ -421,6 +507,13 @@
         <div class="setting-desc">Concurrent relayed connections</div>
       </div>
       <input type="text" class="setting-input" placeholder="128" bind:value={relayMaxCircuits} />
+    </div>
+
+    <div class="save-row">
+      <button class="save-btn" on:click={handleSave} disabled={saving}>
+        {saving ? 'Saving…' : 'Save Relay Settings'}
+      </button>
+      <span class="save-hint">Port & circuits take effect on next relay start</span>
     </div>
   </div>
 
@@ -495,6 +588,11 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     max-width: 400px;
   }
+  .relay-peer-id {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    word-break: break-all; white-space: normal;
+    max-width: none;
+  }
   .subsection-label {
     font-size: 11px; font-weight: 600; color: var(--text-secondary);
     text-transform: uppercase; letter-spacing: 0.3px;
@@ -509,6 +607,15 @@
     flex-shrink: 0;
   }
   .copy-btn:hover { border-color: var(--accent); }
+  .copy-btn-sm {
+    padding: 2px 6px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 3px; color: var(--text); font-size: 10px; cursor: pointer;
+    flex-shrink: 0; line-height: 1;
+  }
+  .copy-btn-sm:hover { border-color: var(--accent); }
+  .btn-group {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  }
   .theme-toggle {
     padding: 6px 14px; background: var(--accent); border: none;
     border-radius: 6px; color: white; font-size: 12px;
@@ -599,4 +706,63 @@
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px; color: var(--text-secondary);
   }
+  /* Relay address rows */
+  .relay-addr-row {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 8px; padding: 4px 0;
+  }
+  .relay-addr-text {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    color: var(--text-secondary); word-break: break-all;
+    line-height: 1.4; flex: 1;
+  }
+  /* Use This Relay button */
+  .use-relay-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 0 4px;
+  }
+  .use-relay-btn {
+    padding: 8px 16px; background: var(--accent); border: none;
+    border-radius: 6px; color: white; font-size: 12px;
+    cursor: pointer; font-weight: 500;
+  }
+  .use-relay-btn:hover { opacity: 0.85; }
+  /* Relay server list */
+  .relay-server-list {
+    max-height: 120px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg); margin-top: 6px;
+  }
+  .relay-server-entry {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .relay-server-entry:last-child { border-bottom: none; }
+  .relay-server-addr {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    color: var(--text); word-break: break-all; line-height: 1.4; flex: 1;
+  }
+  .remove-btn {
+    padding: 2px 6px; background: none; border: 1px solid var(--border);
+    border-radius: 3px; color: var(--text-secondary); font-size: 11px;
+    cursor: pointer; flex-shrink: 0; line-height: 1;
+  }
+  .remove-btn:hover { color: var(--error); border-color: var(--error); }
+  .add-relay-row {
+    display: flex; gap: 6px; margin-top: 6px;
+  }
+  .add-relay-input {
+    flex: 1; padding: 6px 10px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; color: var(--text); font-size: 11px;
+    font-family: 'JetBrains Mono', monospace; outline: none;
+  }
+  .add-relay-input:focus { border-color: var(--accent); }
+  .add-btn {
+    padding: 6px 12px; background: var(--accent); border: none;
+    border-radius: 4px; color: white; font-size: 11px;
+    cursor: pointer; font-weight: 500; flex-shrink: 0;
+  }
+  .add-btn:hover { opacity: 0.85; }
 </style>
