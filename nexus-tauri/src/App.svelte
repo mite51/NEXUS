@@ -43,13 +43,14 @@
   async function autoStartIfEnabled() {
     try {
       const cfg = await getConfig();
-      if (cfg.auto_start_node) {
-        const peerId = await startNode(VAULT_PATH, $passStore);
-        showToast(`Node auto-started: ${peerId.slice(0, 16)}…`);
-      }
+      // Start relay BEFORE node so the node can connect to it
       if (cfg.auto_start_relay) {
         const peerId = await startRelay(cfg.relay_port || 4002, cfg.relay_max_circuits || 128, 4);
         showToast(`Relay auto-started: ${peerId.slice(0, 16)}…`);
+      }
+      if (cfg.auto_start_node) {
+        const peerId = await startNode(VAULT_PATH, $passStore);
+        showToast(`Node auto-started: ${peerId.slice(0, 16)}…`);
       }
     } catch (_) {
       // Silently fail — user can start manually from Settings
