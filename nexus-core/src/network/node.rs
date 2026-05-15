@@ -259,8 +259,15 @@ impl NexusNode {
         // Spawn the event loop
         tokio::spawn(async move {
             // Dial relay servers (connection triggers reservation later)
-            for (_, addr) in &relay_peers {
-                let _ = swarm.dial(addr.clone());
+            if relay_peers.is_empty() {
+                eprintln!("[relay] No relay servers configured");
+            }
+            for (peer_id, addr) in &relay_peers {
+                eprintln!("[relay] Dialing relay {} at {}", peer_id, addr);
+                match swarm.dial(addr.clone()) {
+                    Ok(_) => eprintln!("[relay] Dial initiated for {}", peer_id),
+                    Err(e) => eprintln!("[relay] Dial failed for {}: {:?}", peer_id, e),
+                }
             }
 
             // Track which relays we've reserved with
@@ -276,7 +283,11 @@ impl NexusNode {
                     Some(cmd) = command_rx.recv() => {
                         match cmd {
                             NodeCommand::Dial(addr) => {
-                                let _ = swarm.dial(addr);
+                                eprintln!("  [cmd] Dial: {}", addr);
+                                match swarm.dial(addr.clone()) {
+                                    Ok(_) => eprintln!("  [cmd] Dial initiated"),
+                                    Err(e) => eprintln!("  [cmd] Dial error: {:?}", e),
+                                }
                             }
                             NodeCommand::HolePunch { peer, relay_addr } => {
                                 // Dial peer through relay — DCUtR will automatically
@@ -600,6 +611,7 @@ async fn handle_swarm_event(
         SwarmEvent::ConnectionEstablished { peer_id, endpoint, num_established, .. } => {
             let addr = endpoint.get_remote_address().to_string();
             let is_relayed = addr.contains("/p2p-circuit/");
+            eprintln!("  [conn] Established with {} at {} (relayed: {}, total: {})", peer_id, addr, is_relayed, num_established.get());
             telemetry.record(ConnectivityEvent::ConnectionEstablished {
                 remote_peer: peer_id.to_string(),
                 addr,

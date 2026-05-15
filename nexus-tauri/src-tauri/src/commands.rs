@@ -848,12 +848,20 @@ pub async fn pull_shared_file(
     // Try to dial target peer through configured relay circuits
     // (needed when there's no direct connection to the peer)
     let saved_config = get_config();
+    eprintln!("[pull] Relay servers from config: {:?}", saved_config.relay_servers);
+    eprintln!("[pull] Target peer: {}", target_peer);
     for relay_addr_str in &saved_config.relay_servers {
         // Build circuit address: <relay-addr>/p2p-circuit/p2p/<target-peer>
         let circuit_addr_str = format!("{}/p2p-circuit/p2p/{}", relay_addr_str, target_peer);
+        eprintln!("[pull] Dialing circuit: {}", circuit_addr_str);
         if let Ok(circuit_addr) = circuit_addr_str.parse::<nexus_core::network::Multiaddr>() {
             let _ = cmd_tx.send(NodeCommand::Dial(circuit_addr)).await;
+        } else {
+            eprintln!("[pull] Failed to parse circuit addr: {}", circuit_addr_str);
         }
+    }
+    if saved_config.relay_servers.is_empty() {
+        eprintln!("[pull] WARNING: No relay servers configured! Cannot dial through circuit.");
     }
     // Give the relay circuit time to establish
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -1152,6 +1160,8 @@ pub async fn start_node(
             Some((peer_id, ma))
         })
         .collect();
+
+    eprintln!("[start_node] Config loaded - relay_servers: {:?}, port: {}", saved.relay_servers, port);
 
     let config = NodeConfig {
         listen_addrs: vec![
