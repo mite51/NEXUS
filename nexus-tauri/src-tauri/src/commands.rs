@@ -531,7 +531,7 @@ pub fn accept_join_request(vault_path: &str, passphrase: &str, my_name: &str, re
         .map_err(|e| format!("Invalid join request: {}", e))?;
 
     let (keypair, pre_kp) = load_keys(vault_path, passphrase)?;
-    let my_did = Did::from_public_identity(&keypair.public_identity());
+    let _my_did = Did::from_public_identity(&keypair.public_identity());
 
     // Deterministically derive a PRE keypair for the requester from our vault seed + their peer_id
     let vault_seed = pre_kp.to_secret_bytes();
@@ -818,7 +818,7 @@ pub async fn pull_shared_file(
     output_dir: Option<&str>,
     add_to_my_files: bool,
     state: State<'_, crate::node_state::NodeState>,
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
 ) -> Result<PullResult, String> {
     use nexus_core::storage::AssetStore;
     use nexus_core::manifest::NexusManifest;

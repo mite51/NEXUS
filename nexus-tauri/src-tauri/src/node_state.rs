@@ -18,6 +18,7 @@ pub struct NodeState {
     pull_response_tx: broadcast::Sender<PullResponse>,
 }
 
+#[allow(dead_code)]
 /// A pull response forwarded from the event loop
 #[derive(Debug, Clone)]
 pub struct PullResponse {
