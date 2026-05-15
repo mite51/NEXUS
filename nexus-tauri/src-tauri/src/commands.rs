@@ -1204,7 +1204,14 @@ pub struct AppConfig {
     pub auto_start_node: bool,
     #[serde(default)]
     pub auto_start_relay: bool,
+    #[serde(default = "default_relay_port")]
+    pub relay_port: u16,
+    #[serde(default = "default_relay_max_circuits")]
+    pub relay_max_circuits: u32,
 }
+
+fn default_relay_port() -> u16 { 4002 }
+fn default_relay_max_circuits() -> u32 { 128 }
 
 fn default_telemetry_enabled() -> bool { true }
 
@@ -1217,6 +1224,8 @@ impl Default for AppConfig {
             telemetry_enabled: true,
             auto_start_node: false,
             auto_start_relay: false,
+            relay_port: default_relay_port(),
+            relay_max_circuits: default_relay_max_circuits(),
         }
     }
 }

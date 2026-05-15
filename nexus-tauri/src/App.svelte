@@ -48,7 +48,7 @@
         showToast(`Node auto-started: ${peerId.slice(0, 16)}…`);
       }
       if (cfg.auto_start_relay) {
-        const peerId = await startRelay(VAULT_PATH, $passStore, 4002, 128, 4);
+        const peerId = await startRelay(cfg.relay_port || 4002, cfg.relay_max_circuits || 128, 4);
         showToast(`Relay auto-started: ${peerId.slice(0, 16)}…`);
       }
     } catch (_) {

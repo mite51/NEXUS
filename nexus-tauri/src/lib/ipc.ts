@@ -238,6 +238,8 @@ export interface AppConfig {
   telemetry_enabled: boolean;
   auto_start_node: boolean;
   auto_start_relay: boolean;
+  relay_port: number;
+  relay_max_circuits: number;
 }
 
 export interface ConnectivityStats {

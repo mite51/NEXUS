@@ -37,6 +37,8 @@
       telemetryEnabled = cfg.telemetry_enabled ?? true;
       autoStartNode = cfg.auto_start_node ?? false;
       autoStartRelay = cfg.auto_start_relay ?? false;
+      relayPort = (cfg.relay_port ?? 4002).toString();
+      relayMaxCircuits = (cfg.relay_max_circuits ?? 128).toString();
     } catch (_) {}
     await refreshNode();
     await refreshStats();
@@ -141,6 +143,8 @@
         telemetry_enabled: telemetryEnabled,
         auto_start_node: autoStartNode,
         auto_start_relay: autoStartRelay,
+        relay_port: parseInt(relayPort) || 4002,
+        relay_max_circuits: parseInt(relayMaxCircuits) || 128,
       });
       showToast('✓ Settings saved');
     } catch (e: any) {
