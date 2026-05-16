@@ -109,9 +109,7 @@ impl RelayState {
         // Spawn event handler — only needs event_rx, NOT the server struct
         let stats_clone = stats.clone();
         let event_handle = tokio::spawn(async move {
-            eprintln!("[relay_state] Event handler spawn started");
             while let Some(event) = event_rx.recv().await {
-                eprintln!("[relay_state] Got event: {:?}", event);
                 let mut s = stats_clone.lock().await;
                 match event {
                     RelayServerEvent::Listening(addr) => {
@@ -138,7 +136,6 @@ impl RelayState {
                     RelayServerEvent::CircuitClosed { .. } => {}
                 }
             }
-            eprintln!("[relay_state] Event handler spawn exited (event_rx closed)");
         });
 
         inner.server = Some(RelayHandle {
@@ -152,7 +149,6 @@ impl RelayState {
     }
 
     pub async fn stop(&self) -> Result<(), String> {
-        eprintln!("[relay_state] stop() called!");
         let mut inner = self.inner.lock().await;
         if let Some(handle) = inner.server.take() {
             // Drop shutdown_tx to signal the swarm event loop to exit

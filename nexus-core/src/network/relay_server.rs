@@ -262,7 +262,6 @@ impl RelayServer {
 
         // Spawn event loop
         tokio::spawn(async move {
-            eprintln!("[relay] Event loop started");
             loop {
                 tokio::select! {
                     event = swarm.select_next_some() => {
@@ -270,15 +269,12 @@ impl RelayServer {
                     }
                     shutdown = shutdown_rx.recv() => {
                         if shutdown.is_some() {
-                            eprintln!("[relay] Shutdown signal received (explicit send)");
-                        } else {
-                            eprintln!("[relay] Shutdown channel closed (sender dropped)! Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+                            eprintln!("[relay] Shutdown signal received");
                         }
                         break;
                     }
                 }
             }
-            eprintln!("[relay] Event loop exited!");
         });
 
         Ok(Self {

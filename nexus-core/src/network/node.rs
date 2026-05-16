@@ -260,13 +260,12 @@ impl NexusNode {
         tokio::spawn(async move {
             // Dial relay servers (connection triggers reservation later)
             if relay_peers.is_empty() {
-                eprintln!("[relay] No relay servers configured");
+                eprintln!("[node] No relay servers configured");
             }
             for (peer_id, addr) in &relay_peers {
-                eprintln!("[relay] Dialing relay {} at {}", peer_id, addr);
                 match swarm.dial(addr.clone()) {
-                    Ok(_) => eprintln!("[relay] Dial initiated for {}", peer_id),
-                    Err(e) => eprintln!("[relay] Dial failed for {}: {:?}", peer_id, e),
+                    Ok(_) => eprintln!("[node] Dialing relay {}", peer_id),
+                    Err(e) => eprintln!("[node] Relay dial failed for {}: {:?}", peer_id, e),
                 }
             }
 
@@ -283,10 +282,9 @@ impl NexusNode {
                     Some(cmd) = command_rx.recv() => {
                         match cmd {
                             NodeCommand::Dial(addr) => {
-                                eprintln!("  [cmd] Dial: {}", addr);
                                 match swarm.dial(addr.clone()) {
-                                    Ok(_) => eprintln!("  [cmd] Dial initiated"),
-                                    Err(e) => eprintln!("  [cmd] Dial error: {:?}", e),
+                                    Ok(_) => {},
+                                    Err(e) => eprintln!("[node] Dial error: {:?}", e),
                                 }
                             }
                             NodeCommand::HolePunch { peer, relay_addr } => {
@@ -611,7 +609,7 @@ async fn handle_swarm_event(
         SwarmEvent::ConnectionEstablished { peer_id, endpoint, num_established, .. } => {
             let addr = endpoint.get_remote_address().to_string();
             let is_relayed = addr.contains("/p2p-circuit/");
-            eprintln!("  [conn] Established with {} at {} (relayed: {}, total: {})", peer_id, addr, is_relayed, num_established.get());
+            eprintln!("[node] Connected to {} (relayed: {})", peer_id, is_relayed);
             telemetry.record(ConnectivityEvent::ConnectionEstablished {
                 remote_peer: peer_id.to_string(),
                 addr,
@@ -661,19 +659,18 @@ async fn handle_swarm_event(
         )) => {
             let _ = event_tx.send(NodeEvent::PeerDiscovered(src_peer_id)).await;
         }
-        SwarmEvent::Behaviour(NexusBehaviourEvent::RelayClient(event)) => {
-            eprintln!("  [debug] relay_client event: {:?}", event);
+        SwarmEvent::Behaviour(NexusBehaviourEvent::RelayClient(_event)) => {
         }
         SwarmEvent::ListenerError { listener_id, error } => {
-            eprintln!("  [debug] listener error (id={:?}): {}", listener_id, error);
+            eprintln!("  [node] listener error (id={:?}): {}", listener_id, error);
         }
         SwarmEvent::ListenerClosed { listener_id, reason, .. } => {
-            eprintln!("  [debug] listener closed (id={:?}): {:?}", listener_id, reason);
+            eprintln!("  [node] listener closed (id={:?}): {:?}", listener_id, reason);
         }
         // Outgoing connection error
         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
             let err_str = format!("{}", error);
-            eprintln!("  [conn] OutgoingConnectionError peer={:?} error={}", peer_id, err_str);
+            eprintln!("[node] Connection failed: peer={:?} error={}", peer_id, err_str);
             telemetry.record(ConnectivityEvent::DialFailure {
                 remote_peer: peer_id.map(|p| p.to_string()),
                 addr: "unknown".to_string(),
@@ -682,7 +679,8 @@ async fn handle_swarm_event(
             });
         }
         other => {
-            eprintln!("  [swarm] Unhandled event: {:?}", other);
+            // Suppress unhandled swarm events in release
+            let _ = other;
         }
     }
 }
