@@ -673,6 +673,7 @@ async fn handle_swarm_event(
         // Outgoing connection error
         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
             let err_str = format!("{}", error);
+            eprintln!("  [conn] OutgoingConnectionError peer={:?} error={}", peer_id, err_str);
             telemetry.record(ConnectivityEvent::DialFailure {
                 remote_peer: peer_id.map(|p| p.to_string()),
                 addr: "unknown".to_string(),
@@ -680,6 +681,8 @@ async fn handle_swarm_event(
                 is_relay: false,
             });
         }
-        _ => {}
+        other => {
+            eprintln!("  [swarm] Unhandled event: {:?}", other);
+        }
     }
 }
