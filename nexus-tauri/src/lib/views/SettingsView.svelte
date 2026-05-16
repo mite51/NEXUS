@@ -141,19 +141,14 @@
 
   function buildLocalRelayEntries(): RelayServerEntry[] {
     if (!relayInfo?.running || !relayInfo?.peer_id) return [];
-    const entries: RelayServerEntry[] = [];
-    // Use public IP if available for the public-facing address
     const publicIp = relayInfo.stats.public_ip;
+    if (!publicIp) return [];
     const port = parseInt(relayPort) || 4002;
     const pid = relayInfo.peer_id;
-    if (publicIp) {
-      entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/${publicIp}/tcp/${port}/p2p/${pid}` });
-      entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/${publicIp}/udp/${port}/quic-v1/p2p/${pid}` });
-    }
-    // Always add localhost for local connectivity
-    entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/127.0.0.1/tcp/${port}/p2p/${pid}` });
-    entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/127.0.0.1/udp/${port}/quic-v1/p2p/${pid}` });
-    return entries;
+    return [
+      { name: LOCAL_RELAY_NAME, addr: `/ip4/${publicIp}/tcp/${port}/p2p/${pid}` },
+      { name: LOCAL_RELAY_NAME, addr: `/ip4/${publicIp}/udp/${port}/quic-v1/p2p/${pid}` },
+    ];
   }
 
   async function syncLocalRelayEntries() {
