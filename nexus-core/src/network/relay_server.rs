@@ -130,7 +130,8 @@ pub enum RelayServerEvent {
 pub struct RelayServer {
     pub peer_id: PeerId,
     pub event_rx: mpsc::Receiver<RelayServerEvent>,
-    shutdown_tx: mpsc::Sender<()>,
+    /// Hold this to keep the relay swarm alive. Dropping it signals shutdown.
+    pub shutdown_tx: mpsc::Sender<()>,
 }
 
 impl RelayServer {

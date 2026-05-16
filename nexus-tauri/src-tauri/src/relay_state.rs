@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use serde::Serialize;
 
 use nexus_core::network::{RelayServer, RelayConfig, RelayServerEvent, PeerId, Libp2pKeypair};
@@ -16,6 +16,7 @@ struct RelayInner {
 struct RelayHandle {
     peer_id: PeerId,
     event_handle: tokio::task::JoinHandle<()>,
+    shutdown_tx: mpsc::Sender<()>,
     stats: Arc<Mutex<RelayStats>>,
 }
 
@@ -86,7 +87,7 @@ impl RelayState {
             ..Default::default()
         };
 
-        let mut server = RelayServer::start(keypair, config).await
+        let server = RelayServer::start(keypair, config).await
             .map_err(|e| format!("Failed to start relay: {}", e))?;
 
         eprintln!("[relay_state] Relay started! PeerId={}, port={}", peer_id, port);
@@ -101,11 +102,15 @@ impl RelayState {
             total_circuits: 0,
         }));
 
-        // Spawn event handler
+        // Extract shutdown_tx to store separately in RelayHandle
+        let shutdown_tx = server.shutdown_tx;
+        let mut event_rx = server.event_rx;
+
+        // Spawn event handler — only needs event_rx, NOT the server struct
         let stats_clone = stats.clone();
         let event_handle = tokio::spawn(async move {
             eprintln!("[relay_state] Event handler spawn started");
-            while let Some(event) = server.event_rx.recv().await {
+            while let Some(event) = event_rx.recv().await {
                 eprintln!("[relay_state] Got event: {:?}", event);
                 let mut s = stats_clone.lock().await;
                 match event {
@@ -139,6 +144,7 @@ impl RelayState {
         inner.server = Some(RelayHandle {
             peer_id,
             event_handle,
+            shutdown_tx,
             stats,
         });
 
@@ -146,9 +152,12 @@ impl RelayState {
     }
 
     pub async fn stop(&self) -> Result<(), String> {
-        eprintln!("[relay_state] stop() called! Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+        eprintln!("[relay_state] stop() called!");
         let mut inner = self.inner.lock().await;
         if let Some(handle) = inner.server.take() {
+            // Drop shutdown_tx to signal the swarm event loop to exit
+            drop(handle.shutdown_tx);
+            // Abort the event handler spawn
             handle.event_handle.abort();
         }
         Ok(())
