@@ -231,15 +231,21 @@ export async function getNodeInfo(): Promise<NodeInfo> {
   return invoke('get_node_info');
 }
 
+export interface RelayServerEntry {
+  name: string;
+  addr: string;
+}
+
 export interface AppConfig {
   listen_port: number | null;
   bootstrap_peers: string[];
-  relay_servers: string[];
+  relay_servers: RelayServerEntry[];
   telemetry_enabled: boolean;
   auto_start_node: boolean;
   auto_start_relay: boolean;
   relay_port: number;
   relay_max_circuits: number;
+  use_local_relay: boolean;
 }
 
 export interface ConnectivityStats {

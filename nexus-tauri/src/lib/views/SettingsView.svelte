@@ -4,14 +4,15 @@
   import { theme, toggleTheme } from '../stores/theme';
   import { addLog } from '../stores/logs';
   import { getConfig, saveConfig, getConnectivityStats, startRelay, stopRelay, getRelayInfo, startNode, stopNode, getNodeInfo } from '../ipc';
-  import type { ConnectivityStats, RelayInfo, NodeInfo } from '../ipc';
+  import type { ConnectivityStats, RelayInfo, NodeInfo, RelayServerEntry } from '../ipc';
 
   let listenPort: string = '';
   let bootstrapPeers: string = '';
-  let relayServers: string = '';
+  let relayServers: RelayServerEntry[] = [];
   let telemetryEnabled: boolean = true;
   let autoStartNode: boolean = false;
   let autoStartRelay: boolean = false;
+  let useLocalRelay: boolean = false;
   let exportingKey = false;
   let saving = false;
   let connectivityStats: ConnectivityStats | null = null;
@@ -26,17 +27,18 @@
   let refreshTimer: ReturnType<typeof setInterval>;
   let newRelayServer: string = '';
 
-  $: relayServerList = relayServers.split('\n').map(s => s.trim()).filter(Boolean);
+  const LOCAL_RELAY_NAME = 'Local Relay';
 
   onMount(async () => {
     try {
       const cfg = await getConfig();
       listenPort = cfg.listen_port?.toString() ?? '';
       bootstrapPeers = cfg.bootstrap_peers.join('\n');
-      relayServers = cfg.relay_servers.join('\n');
+      relayServers = cfg.relay_servers ?? [];
       telemetryEnabled = cfg.telemetry_enabled ?? true;
       autoStartNode = cfg.auto_start_node ?? false;
       autoStartRelay = cfg.auto_start_relay ?? false;
+      useLocalRelay = cfg.use_local_relay ?? false;
       relayPort = (cfg.relay_port ?? 4002).toString();
       relayMaxCircuits = (cfg.relay_max_circuits ?? 128).toString();
     } catch (_) {}
@@ -109,6 +111,10 @@
       addLog('success', 'Relay', `Relay started`, `PeerId: ${peerId}`);
       showToast(`Relay started: ${peerId.slice(0, 16)}…`);
       await refreshRelay();
+      // If "Use Local Relay" is on, auto-update relay server entries
+      if (useLocalRelay) {
+        await syncLocalRelayEntries();
+      }
     } catch (e: any) {
       let msg = String(e);
       if (msg.includes('Address already in use') || msg.includes('AddrInUse') || msg.includes('10048')) {
@@ -133,39 +139,68 @@
     relayStopping = false;
   }
 
+  function buildLocalRelayEntries(): RelayServerEntry[] {
+    if (!relayInfo?.running || !relayInfo?.peer_id) return [];
+    const entries: RelayServerEntry[] = [];
+    // Use public IP if available for the public-facing address
+    const publicIp = relayInfo.stats.public_ip;
+    const port = parseInt(relayPort) || 4002;
+    const pid = relayInfo.peer_id;
+    if (publicIp) {
+      entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/${publicIp}/tcp/${port}/p2p/${pid}` });
+      entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/${publicIp}/udp/${port}/quic-v1/p2p/${pid}` });
+    }
+    // Always add localhost for local connectivity
+    entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/127.0.0.1/tcp/${port}/p2p/${pid}` });
+    entries.push({ name: LOCAL_RELAY_NAME, addr: `/ip4/127.0.0.1/udp/${port}/quic-v1/p2p/${pid}` });
+    return entries;
+  }
+
+  async function syncLocalRelayEntries() {
+    // Remove old "Local Relay" entries, add fresh ones
+    const manual = relayServers.filter(e => e.name !== LOCAL_RELAY_NAME);
+    const local = buildLocalRelayEntries();
+    relayServers = [...local, ...manual];
+    await handleSave();
+  }
+
+  async function handleToggleUseLocalRelay() {
+    useLocalRelay = !useLocalRelay;
+    if (useLocalRelay) {
+      if (!relayInfo?.running) {
+        showToast('⚠ Start the relay first — entries will be added when it starts');
+        await handleSave();
+        return;
+      }
+      await syncLocalRelayEntries();
+      showToast('✓ Local relay addresses added');
+    } else {
+      // Remove all "Local Relay" entries
+      relayServers = relayServers.filter(e => e.name !== LOCAL_RELAY_NAME);
+      await handleSave();
+      showToast('✓ Local relay addresses removed');
+    }
+  }
+
   async function handleSave() {
     saving = true;
     try {
       await saveConfig({
         listen_port: listenPort ? parseInt(listenPort) || null : null,
         bootstrap_peers: bootstrapPeers.split('\n').map(s => s.trim()).filter(Boolean),
-        relay_servers: relayServers.split('\n').map(s => s.trim()).filter(Boolean),
+        relay_servers: relayServers,
         telemetry_enabled: telemetryEnabled,
         auto_start_node: autoStartNode,
         auto_start_relay: autoStartRelay,
         relay_port: parseInt(relayPort) || 4002,
         relay_max_circuits: parseInt(relayMaxCircuits) || 128,
+        use_local_relay: useLocalRelay,
       });
       showToast('✓ Settings saved');
     } catch (e: any) {
       showToast(`⚠ ${e}`);
     }
     saving = false;
-  }
-
-  async function handleUseLocalRelay() {
-    if (!relayInfo?.running || !relayInfo?.peer_id) return;
-    // Build multiaddr entries from relay listen addresses
-    const addrs = relayInfo.stats.listen_addrs.map(
-      (addr: string) => `${addr}/p2p/${relayInfo!.peer_id}`
-    );
-    if (addrs.length === 0) {
-      showToast('⚠ Relay has no listen addresses yet');
-      return;
-    }
-    relayServers = addrs.join('\n');
-    await handleSave();
-    showToast('✓ Node configured to use local relay');
   }
 
   async function handleExportDid() {
@@ -199,17 +234,16 @@
   function addRelayServer() {
     const trimmed = newRelayServer.trim();
     if (!trimmed) return;
-    if (relayServerList.includes(trimmed)) {
+    if (relayServers.some(e => e.addr === trimmed)) {
       showToast('⚠ Already in list');
       return;
     }
-    relayServers = [...relayServerList, trimmed].join('\n');
+    relayServers = [...relayServers, { name: '', addr: trimmed }];
     newRelayServer = '';
   }
 
   function removeRelayServer(index: number) {
-    const updated = relayServerList.filter((_, i) => i !== index);
-    relayServers = updated.join('\n');
+    relayServers = relayServers.filter((_, i) => i !== index);
   }
 </script>
 
@@ -273,7 +307,6 @@
 
     <!-- Running details -->
     {#if nodeInfo.running}
-      <!-- Network Health (inline) -->
       {#if connectivityStats}
         <div class="health-grid">
           <div class="health-stat">
@@ -303,7 +336,6 @@
         </div>
       {/if}
 
-      <!-- Connected Peers -->
       {#if nodeInfo.connected_peers.length > 0}
         <div class="subsection-label">Connected Peers</div>
         <div class="peers-list">
@@ -318,7 +350,6 @@
         <div class="muted" style="padding: 8px 0; font-size: 11px;">No peers connected yet.</div>
       {/if}
 
-      <!-- Listen Addrs -->
       {#if nodeInfo.listen_addrs.length > 0}
         <div class="subsection-label">Listening On</div>
         {#each nodeInfo.listen_addrs as addr}
@@ -366,13 +397,20 @@
 
     <!-- Relay server list -->
     <div class="relay-server-list">
-      {#if relayServerList.length === 0}
+      {#if relayServers.length === 0}
         <div class="muted" style="padding: 8px; font-size: 11px;">No relay servers configured.</div>
       {:else}
-        {#each relayServerList as addr, i}
+        {#each relayServers as entry, i}
           <div class="relay-server-entry">
-            <span class="relay-server-addr">{addr}</span>
-            <button class="remove-btn" on:click={() => removeRelayServer(i)} on:keydown={(e) => { if (e.key === 'Enter') removeRelayServer(i); }} title="Remove">✕</button>
+            <div class="relay-server-info">
+              {#if entry.name}
+                <span class="relay-server-name">{entry.name}</span>
+              {/if}
+              <span class="relay-server-addr">{entry.addr}</span>
+            </div>
+            {#if entry.name !== LOCAL_RELAY_NAME}
+              <button class="remove-btn" on:click={() => removeRelayServer(i)} on:keydown={(e) => { if (e.key === 'Enter') removeRelayServer(i); }} title="Remove">✕</button>
+            {/if}
           </div>
         {/each}
       {/if}
@@ -473,18 +511,22 @@
           </div>
         {/each}
       {/if}
-
-      <!-- Use This Relay button -->
-      <div class="use-relay-row">
-        <button class="use-relay-btn" on:click={handleUseLocalRelay}>
-          📡 Use This Relay for Node
-        </button>
-        <span class="save-hint">Sets relay addresses in node config & saves</span>
-      </div>
     {/if}
 
     <!-- Config -->
     <div class="config-divider"></div>
+
+    <!-- Use Local Relay checkbox -->
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Use Local Relay</div>
+        <div class="setting-desc">Auto-add this relay's public address to node config</div>
+      </div>
+      <label class="toggle-label">
+        <input type="checkbox" checked={useLocalRelay} on:change={handleToggleUseLocalRelay} />
+        <span class="toggle-text">{useLocalRelay ? 'On' : 'Off'}</span>
+      </label>
+    </div>
 
     <div class="setting-row">
       <div class="setting-info">
@@ -720,20 +762,9 @@
     color: var(--text-secondary); word-break: break-all;
     line-height: 1.4; flex: 1;
   }
-  /* Use This Relay button */
-  .use-relay-row {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 0 4px;
-  }
-  .use-relay-btn {
-    padding: 8px 16px; background: var(--accent); border: none;
-    border-radius: 6px; color: white; font-size: 12px;
-    cursor: pointer; font-weight: 500;
-  }
-  .use-relay-btn:hover { opacity: 0.85; }
   /* Relay server list */
   .relay-server-list {
-    max-height: 120px; overflow-y: auto;
+    max-height: 140px; overflow-y: auto;
     border: 1px solid var(--border); border-radius: 4px;
     background: var(--bg); margin-top: 6px;
   }
@@ -743,14 +774,21 @@
     border-bottom: 1px solid var(--border);
   }
   .relay-server-entry:last-child { border-bottom: none; }
+  .relay-server-info {
+    display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0;
+  }
+  .relay-server-name {
+    font-size: 10px; font-weight: 600; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.3px;
+  }
   .relay-server-addr {
     font-family: 'JetBrains Mono', monospace; font-size: 10px;
-    color: var(--text); word-break: break-all; line-height: 1.4; flex: 1;
+    color: var(--text); word-break: break-all; line-height: 1.4;
   }
   .remove-btn {
     padding: 2px 6px; background: none; border: 1px solid var(--border);
     border-radius: 3px; color: var(--text-secondary); font-size: 11px;
-    cursor: pointer; flex-shrink: 0; line-height: 1;
+    cursor: pointer; flex-shrink: 0; line-height: 1; margin-top: 2px;
   }
   .remove-btn:hover { color: var(--error); border-color: var(--error); }
   .add-relay-row {

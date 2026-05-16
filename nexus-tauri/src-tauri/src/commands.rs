@@ -848,9 +848,10 @@ pub async fn pull_shared_file(
     // Try to dial target peer through configured relay circuits
     // (needed when there's no direct connection to the peer)
     let saved_config = get_config();
-    eprintln!("[pull] Relay servers from config: {:?}", saved_config.relay_servers);
+    let relay_addrs: Vec<String> = saved_config.relay_servers.iter().map(|e| e.addr.clone()).collect();
+    eprintln!("[pull] Relay servers from config: {:?}", relay_addrs);
     eprintln!("[pull] Target peer: {}", target_peer);
-    for relay_addr_str in &saved_config.relay_servers {
+    for relay_addr_str in &relay_addrs {
         // Build circuit address: <relay-addr>/p2p-circuit/p2p/<target-peer>
         let circuit_addr_str = format!("{}/p2p-circuit/p2p/{}", relay_addr_str, target_peer);
         eprintln!("[pull] Dialing circuit: {}", circuit_addr_str);
@@ -860,7 +861,7 @@ pub async fn pull_shared_file(
             eprintln!("[pull] Failed to parse circuit addr: {}", circuit_addr_str);
         }
     }
-    if saved_config.relay_servers.is_empty() {
+    if relay_addrs.is_empty() {
         eprintln!("[pull] WARNING: No relay servers configured! Cannot dial through circuit.");
     }
     // Give the relay circuit time to establish
@@ -1161,7 +1162,8 @@ pub async fn start_node(
         })
         .collect();
 
-    eprintln!("[start_node] Config loaded - relay_servers: {:?}, port: {}", saved.relay_servers, port);
+    let relay_addrs: Vec<String> = saved.relay_servers.iter().map(|e| e.addr.clone()).collect();
+    eprintln!("[start_node] Config loaded - relay_servers: {:?}, port: {}", relay_addrs, port);
 
     let config = NodeConfig {
         listen_addrs: vec![
@@ -1170,7 +1172,7 @@ pub async fn start_node(
         ],
         bootstrap_peers,
         mdns_enabled: true,
-        relay_servers: saved.relay_servers.clone(),
+        relay_servers: relay_addrs,
         telemetry_enabled: true,
         telemetry_dir: None,
     };
@@ -1193,11 +1195,17 @@ pub async fn get_node_info(state: State<'_, NodeState>) -> Result<NodeInfo, Stri
 const CONFIG_PATH: &str = ".nexus-config.json";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RelayServerEntry {
+    pub name: String,
+    pub addr: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
     pub listen_port: Option<u16>,
     pub bootstrap_peers: Vec<String>,
-    #[serde(default)]
-    pub relay_servers: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_relay_servers")]
+    pub relay_servers: Vec<RelayServerEntry>,
     #[serde(default = "default_telemetry_enabled")]
     pub telemetry_enabled: bool,
     #[serde(default)]
@@ -1208,12 +1216,40 @@ pub struct AppConfig {
     pub relay_port: u16,
     #[serde(default = "default_relay_max_circuits")]
     pub relay_max_circuits: u32,
+    #[serde(default)]
+    pub use_local_relay: bool,
 }
 
 fn default_relay_port() -> u16 { 4002 }
 fn default_relay_max_circuits() -> u32 { 128 }
 
 fn default_telemetry_enabled() -> bool { true }
+
+/// Backwards-compatible deserializer: accepts either Vec<String> (old format)
+/// or Vec<RelayServerEntry> (new format).
+fn deserialize_relay_servers<'de, D>(deserializer: D) -> Result<Vec<RelayServerEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RelayItem {
+        Entry(RelayServerEntry),
+        Plain(String),
+    }
+
+    let items: Vec<RelayItem> = Vec::deserialize(deserializer)?;
+    Ok(items
+        .into_iter()
+        .map(|item| match item {
+            RelayItem::Entry(e) => e,
+            RelayItem::Plain(addr) => RelayServerEntry {
+                name: String::new(),
+                addr,
+            },
+        })
+        .collect())
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -1226,6 +1262,7 @@ impl Default for AppConfig {
             auto_start_relay: false,
             relay_port: default_relay_port(),
             relay_max_circuits: default_relay_max_circuits(),
+            use_local_relay: false,
         }
     }
 }
