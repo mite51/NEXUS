@@ -243,6 +243,7 @@ impl RelayServer {
                 event = swarm.select_next_some() => {
                     if let SwarmEvent::NewListenAddr { address, .. } = &event {
                         bound_listeners += 1;
+                        eprintln!("[relay] Listener {} bound: {}", bound_listeners, address);
                         let _ = event_tx.send(RelayServerEvent::Listening(address.to_string())).await;
                     }
                     // Handle other events that arrive during startup
