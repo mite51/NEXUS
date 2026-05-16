@@ -232,6 +232,32 @@ impl RelayServer {
             let _ = event_tx.send(RelayServerEvent::PublicIpDetected(ip.clone())).await;
         }
 
+        // Wait for listeners to actually bind before returning.
+        // This prevents race conditions where callers assume the relay
+        // is ready but the TCP/QUIC ports aren't bound yet.
+        let expected_listeners = config.listen_addrs.len();
+        let mut bound_listeners = 0usize;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while bound_listeners < expected_listeners {
+            tokio::select! {
+                event = swarm.select_next_some() => {
+                    if let SwarmEvent::NewListenAddr { address, .. } = &event {
+                        bound_listeners += 1;
+                        let _ = event_tx.send(RelayServerEvent::Listening(address.to_string())).await;
+                    }
+                    // Handle other events that arrive during startup
+                    if !matches!(&event, SwarmEvent::NewListenAddr { .. }) {
+                        Self::handle_event(event, &event_tx).await;
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    eprintln!("[relay] Warning: only {}/{} listeners bound before timeout", bound_listeners, expected_listeners);
+                    break;
+                }
+            }
+        }
+        eprintln!("[relay] All {} listeners bound, relay ready", bound_listeners);
+
         // Spawn event loop
         tokio::spawn(async move {
             loop {
