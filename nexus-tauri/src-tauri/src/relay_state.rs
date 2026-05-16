@@ -146,6 +146,7 @@ impl RelayState {
     }
 
     pub async fn stop(&self) -> Result<(), String> {
+        eprintln!("[relay_state] stop() called! Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
         let mut inner = self.inner.lock().await;
         if let Some(handle) = inner.server.take() {
             handle.event_handle.abort();

@@ -269,9 +269,9 @@ impl RelayServer {
                     }
                     shutdown = shutdown_rx.recv() => {
                         if shutdown.is_some() {
-                            eprintln!("[relay] Shutdown signal received");
+                            eprintln!("[relay] Shutdown signal received (explicit send)");
                         } else {
-                            eprintln!("[relay] Shutdown channel closed (sender dropped)");
+                            eprintln!("[relay] Shutdown channel closed (sender dropped)! Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
                         }
                         break;
                     }
