@@ -261,16 +261,19 @@ impl RelayServer {
 
         // Spawn event loop
         tokio::spawn(async move {
+            eprintln!("[relay] Event loop started");
             loop {
                 tokio::select! {
                     event = swarm.select_next_some() => {
                         Self::handle_event(event, &event_tx).await;
                     }
                     _ = shutdown_rx.recv() => {
+                        eprintln!("[relay] Shutdown signal received");
                         break;
                     }
                 }
             }
+            eprintln!("[relay] Event loop exited!");
         });
 
         Ok(Self {
