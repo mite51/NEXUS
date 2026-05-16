@@ -267,8 +267,12 @@ impl RelayServer {
                     event = swarm.select_next_some() => {
                         Self::handle_event(event, &event_tx).await;
                     }
-                    _ = shutdown_rx.recv() => {
-                        eprintln!("[relay] Shutdown signal received");
+                    shutdown = shutdown_rx.recv() => {
+                        if shutdown.is_some() {
+                            eprintln!("[relay] Shutdown signal received");
+                        } else {
+                            eprintln!("[relay] Shutdown channel closed (sender dropped)");
+                        }
                         break;
                     }
                 }
