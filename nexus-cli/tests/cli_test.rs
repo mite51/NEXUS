@@ -8,19 +8,8 @@ use std::process::Command;
 use tempfile::TempDir;
 
 fn nexus_bin() -> PathBuf {
-    let ext = if cfg!(windows) { "nexus.exe" } else { "nexus" };
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-
-    // Try release first, then debug
-    let release = root.join("target/release").join(ext);
-    if release.exists() {
-        return release;
-    }
-    let debug = root.join("target/debug").join(ext);
-    if debug.exists() {
-        return debug;
-    }
-    panic!("nexus binary not found. Run `cargo build -p nexus-cli` first.");
+    // CARGO_BIN_EXE_nexus is set automatically by cargo test for binaries in the same crate
+    PathBuf::from(env!("CARGO_BIN_EXE_nexus"))
 }
 
 fn run_nexus(dir: &Path, args: &[&str], stdin_input: &str) -> (String, String, bool) {
