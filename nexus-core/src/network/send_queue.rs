@@ -240,9 +240,15 @@ impl SendQueue {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_queue() -> (SendQueue, PathBuf) {
-        let path = std::env::temp_dir().join(format!("nexus-send-queue-test-{}.json", std::process::id()));
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "nexus-send-queue-test-{}-{}.json", std::process::id(), n
+        ));
         let _ = fs::remove_file(&path);
         (SendQueue::open(&path), path)
     }

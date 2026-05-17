@@ -180,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delivery_worker_processes_pending() {
-        let uid = format!("{}-{}", std::process::id(), std::thread::current().name().unwrap_or("t"));
+        let uid = format!("{}-{}", std::process::id(), std::thread::current().name().unwrap_or("t").replace("::", "_"));
         let queue_path = std::env::temp_dir()
             .join(format!("nexus-delivery-test-{}.json", uid));
         let store_path = std::env::temp_dir()
