@@ -176,7 +176,7 @@ mod tests {
     use tokio::sync::mpsc;
     use std::fs;
     use crate::storage::ShardStore;
-    use crate::storage::shard::{shard_data, Shard};
+    use crate::storage::shard::shard_data;
 
     #[tokio::test]
     async fn test_delivery_worker_processes_pending() {

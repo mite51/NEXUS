@@ -1,3 +1,4 @@
+#![allow(unused_assignments)]
 //! Integration test: End-to-end pull-only file sharing
 //!
 //! Alice encrypts a file → shares with Bob via PRE → Bob pulls entire asset from Alice's node
@@ -37,7 +38,7 @@ async fn test_pull_asset_e2e() {
 
     // Setup temp dirs for stores
     let alice_dir = TempDir::new().unwrap();
-    let bob_dir = TempDir::new().unwrap();
+    let _bob_dir = TempDir::new().unwrap();
 
     let alice_store = AssetStore::open(alice_dir.path()).unwrap();
     let alice_shard_store = ShardStore::open(alice_dir.path()).unwrap();
@@ -334,7 +335,7 @@ async fn test_pull_public_asset_e2e() {
     // ============================================================
     // Step 2: Alice marks the asset as public
     // ============================================================
-    use nexus_core::crypto::pre::{self, public_pre_keypair, PUBLIC_DID};
+    use nexus_core::crypto::pre::{public_pre_keypair, PUBLIC_DID};
 
     let public_kp = public_pre_keypair();
     let signer = PreSigner::new();

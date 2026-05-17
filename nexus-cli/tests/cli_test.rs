@@ -8,16 +8,15 @@ use std::process::Command;
 use tempfile::TempDir;
 
 fn nexus_bin() -> PathBuf {
+    let ext = if cfg!(windows) { "nexus.exe" } else { "nexus" };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+
     // Try release first, then debug
-    let release = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .join("target/release/nexus");
+    let release = root.join("target/release").join(ext);
     if release.exists() {
         return release;
     }
-    let debug = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .join("target/debug/nexus");
+    let debug = root.join("target/debug").join(ext);
     if debug.exists() {
         return debug;
     }

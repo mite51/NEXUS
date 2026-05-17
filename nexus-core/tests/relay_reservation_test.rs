@@ -1,3 +1,4 @@
+#![allow(unused_assignments)]
 //! Integration test: Relay reservation and circuit relay pull
 //!
 //! Tests that:
