@@ -12,21 +12,31 @@
     "active": true,
     "targets": "all",
     "icon": [
-      "icons/icon.png"
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/512x512.png",
+      "icons/icon.png",
+      "icons/icon.ico"
     ],
     "category": "Utility",
     "shortDescription": "Encrypted file sharing with p2p networking",
     "longDescription": "NEXUS: A peer-to-peer encrypted file sharing application using libp2p for NAT traversal, Proxy Re-Encryption for secure sharing, and content-addressed storage for integrity.",
     "fileAssociations": [
       {
-        "ext": ["nexus-bundle"],
+        "ext": [
+          "nexus-bundle"
+        ],
         "mimeType": "application/x-nexus-bundle",
         "description": "NEXUS Encrypted Bundle"
       }
     ],
     "linux": {
       "deb": {
-        "depends": ["libssl3", "libwebkit2gtk-4.1-0"],
+        "depends": [
+          "libssl3",
+          "libwebkit2gtk-4.1-0"
+        ],
         "section": "net"
       },
       "appimage": {
