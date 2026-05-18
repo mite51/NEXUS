@@ -274,12 +274,12 @@ struct LinkedAsset {
 
 ## 9. Open Questions
 
-1. ~~**Push approval mode?**~~ → **Resolved:** Auto-accept if authorized. Reject unknown/unauthorized silently — users sort it out themselves.
+1. ~~**Push approval mode?**~~ → **Resolved:** Auto-accept if authorized. Reject unknown/unauthorized silently - users sort it out themselves.
 2. ~~**Conflict resolution for modify?**~~ → **Resolved:** See §9.1 below (asset versioning).
 3. ~~**LiveStream feasibility**~~ → **Resolved:** See §9.2 below (direct connection required).
 4. ~~**Quota/rate limiting on push?**~~ → **Resolved:** Simple disk space check. If insufficient space, reject push. No complex quota system.
 5. ~~**Group nesting?**~~ → **Resolved:** Flat for v1. No nested groups.
-6. ~~**Folder depth limit?**~~ → **Resolved:** Windows MAX_PATH (260 chars) as the virtual path limit. Doesn’t reflect actual on-disk layout but provides a reasonable cross-platform restriction.
+6. ~~**Folder depth limit?**~~ → **Resolved:** Windows MAX_PATH (260 chars) as the virtual path limit. Doesn't reflect actual on-disk layout but provides a reasonable cross-platform restriction.
 7. ~~**Chat session UX**~~ → **Resolved:** Separate UI surface. Will design next.
 
 ### 9.1 Asset Versioning (Resolved)
@@ -343,7 +343,68 @@ struct Revision {
 4. **Groups** (convenience layer on top of contacts)
 5. **Linked files** (file watcher + index)
 6. **Chat sessions** (append-only asset type)
-7. **Live streams** (future - separate protocol work)
+7. **Live streams** (future — separate protocol work)
+
+---
+
+## 11. Threat Model & Abuse Vectors
+
+### 11.1 Access Control Bypass
+
+| # | Threat | Description | Mitigation |
+|---|--------|-------------|------------|
+| 1 | **Stale PeerId spoofing** | Contact's PeerId changes (new device) but DID stays same. Attacker compromises old device, tries to push using old PeerId. | Auth must verify DID signature on every request, not just PeerId match. PeerId is a routing hint, not an identity proof. |
+| 2 | **Group config tampering** | Attacker with local disk access edits `groups.json` to add themselves. | Groups/contacts files must be integrity-protected (signed by vault owner key, or encrypted at rest). |
+| 3 | **Grant self-escalation** | Malicious insider with `modify` access creates an asset-level grant giving themselves higher access to other folders. | Grants are ONLY writable by vault owner. Contacts can never create/modify grants, even with `modify` permission. `modify` means data, not policy. |
+
+### 11.2 Storage & Resource Attacks
+
+| # | Threat | Description | Mitigation |
+|---|--------|-------------|------------|
+| 4 | **Disk fill via micro-pushes** | Contact with `write` pushes millions of tiny files, exhausting inodes or making vault unusable. Disk space check passes each time (1 byte free = OK). | Per-contact push rate limit (configurable, e.g. N pushes/hour). Asset count cap per folder. |
+| 5 | **Revision bombing** | Push the same filename 10,000 times → 10,000 revisions. History grows unbounded, storage bloats. | Max revisions per asset (configurable, default ~100). Oldest auto-pruned when cap hit, or reject push. |
+| 6 | **Zip bomb on LinkedFolder** | Malicious zipped directory expands to TB on extraction. Especially dangerous with `push_live = true`. | Validate decompressed size before extraction. Hard limit on expansion ratio (e.g. 100:1 max). Abort if exceeded. |
+
+### 11.3 Network & Protocol Attacks
+
+| # | Threat | Description | Mitigation |
+|---|--------|-------------|------------|
+| 7 | **PushRequest flood (DoS)** | Unauthorized peers spam PushRequests. Even rejected, auth check has CPU cost. | Rate-limit inbound requests by PeerId. Ban (temp-blacklist) after N consecutive failed auth attempts. |
+| 8 | **Relay metadata leakage** | Relay operator can observe who talks to whom (PeerIds, timing, frequency). Builds social graph. | Acknowledged risk. Not solvable without onion routing. Users should run own relay for sensitive use. Document in privacy notes. |
+| 9 | **Replay attacks** | Attacker captures a valid PushRequest and replays it later to re-push data or trigger processing. | Every protocol message requires a nonce + timestamp. Receiver rejects messages older than validity window (e.g. 60s). Nonce cache prevents reuse within window. |
+
+### 11.4 Cryptographic Concerns
+
+| # | Threat | Description | Mitigation |
+|---|--------|-------------|------------|
+| 10 | **Mirror cfrag accumulation** | Mirrors hold per-contact cfrags. Compromised mirror = attacker can decrypt for all authorized contacts. | Mirrors should only hold cfrags for currently-active sessions, not cache indefinitely. Or: require mirror to request cfrag from owner in real-time (owner must be online). |
+| 11 | **On-demand cfrag → owner must be online** | Lazy cfrag generation means vault owner must be online for any group member to access shared assets. | Trade-off: on-demand = more secure but less available. Pre-generated = available offline but riskier on mirror compromise. Make configurable per-folder ("offline access" toggle). |
+| 12 | **PRE key compromise** | Contact's PRE private key compromised → attacker decrypts everything ever shared with that contact. No retroactive fix. | PRE key rotation mechanism: contacts can rotate keys, owner re-issues cfrags for new key. Old cfrags become useless. Encourage periodic rotation. |
+
+### 11.5 Operational & UX Risks
+
+| # | Threat | Description | Mitigation |
+|---|--------|-------------|------------|
+| 13 | **`push_live` overwrites critical files** | Contact with write access pushes to linked folder with `push_live = true`, overwrites production files/configs/scripts. | Default OFF always. Require per-folder explicit opt-in. UI: bury in advanced settings with warning. Consider requiring `modify` (not just `write`) for push_live folders. |
+| 14 | **Folder path traversal** | Malicious push target like `../../.ssh/authorized_keys` escapes vault boundary. | All folder paths MUST be canonicalized and validated to stay within vault root. Reject any path containing `..`, absolute paths, or symlinks pointing outside vault. |
+| 15 | **Display name collision** | Two different assets with same `display_name` in same folder (different `asset_id`). Confusing UI, potential for phishing ("open this file"). | UI must disambiguate (show source DID or revision info). Revisions match on `asset_id`, never on display name alone. Consider: reject push if name collision with different asset_id (force unique names per folder). |
+
+---
+
+## 12. Required Mitigations (Build From Day One)
+
+These are not optional hardening — they should be in the initial implementation:
+
+1. **Sign every request with sender's DID key** — PeerId is routing, DID signature is auth
+2. **Nonce + timestamp on all protocol messages** — 60s validity window, nonce replay cache
+3. **Rate limiting per-peer at network layer** — configurable, default 60 requests/min
+4. **Revision cap per asset** — configurable, default 100
+5. **Decompression size limit for zipped folders** — 100:1 max ratio, hard byte cap
+6. **Path canonicalization + jail to vault root** — no `..`, no absolute, no symlink escape
+7. **`push_live` defaults OFF** — per-folder opt-in only, requires `modify` permission
+8. **Grants only writable by vault owner** — never by contacts, regardless of permission level
+9. **Integrity protection on config files** — `contacts.json`, `groups.json`, `folders.json` signed by owner key
+10. **Per-contact push rate limit** — prevent micro-push flooding
 
 ---
 
