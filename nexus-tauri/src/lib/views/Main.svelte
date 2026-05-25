@@ -7,6 +7,7 @@
   import type { FileEntry, Contact, ShareInfo } from '../ipc';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
+  import { updatePushSession, cleanupOldSessions } from '../stores/push';
   import FileGrid from '../components/FileGrid.svelte';
   import DetailPanel from '../components/DetailPanel.svelte';
   import ContactPicker from '../components/ContactPicker.svelte';
@@ -17,8 +18,10 @@
   import ProgressBar from '../components/ProgressBar.svelte';
   import ContactsView from './ContactsView.svelte';
   import SharedWithMeView from './SharedWithMeView.svelte';
+  import IncomingView from './IncomingView.svelte';
   import SettingsView from './SettingsView.svelte';
   import LogsView from './LogsView.svelte';
+  import PushToast from '../components/PushToast.svelte';
 
   export let vaultPath: string;
 
@@ -35,6 +38,8 @@
   let unlistenProgress: (() => void) | null = null;
   let unlistenDecryptProgress: (() => void) | null = null;
   let unlistenNodeLog: (() => void) | null = null;
+  let unlistenPushProgress: (() => void) | null = null;
+  let pushCleanupInterval: number | null = null;
   let encryptProgress = 0;
   let decryptProgress = 0;
   let searchQuery = '';
@@ -86,6 +91,12 @@
       const { level, source, message, detail } = event.payload;
       addLog(level as any, source, message, detail ?? undefined);
     });
+    // Listen for push progress events
+    unlistenPushProgress = await listen<{ session_id: string; sender_did: string; filename: string; shards_received: number; shards_total: number; status: string; reason?: string }>('nexus://push-progress', (event) => {
+      updatePushSession(event.payload);
+    });
+    // Periodic cleanup of old push sessions
+    pushCleanupInterval = window.setInterval(cleanupOldSessions, 60_000);
   });
 
   onDestroy(() => {
@@ -93,6 +104,8 @@
     if (unlistenProgress) unlistenProgress();
     if (unlistenDecryptProgress) unlistenDecryptProgress();
     if (unlistenNodeLog) unlistenNodeLog();
+    if (unlistenPushProgress) unlistenPushProgress();
+    if (pushCleanupInterval !== null) clearInterval(pushCleanupInterval);
   });
 
   function handleCopyDid() {
@@ -326,6 +339,7 @@
     <h2>{
       $currentView === 'files' ? 'My Files' :
       $currentView === 'shared' ? 'Download Shared File' :
+      $currentView === 'incoming' ? 'Incoming' :
       $currentView === 'contacts' ? 'Contacts' :
       $currentView === 'logs' ? 'Logs' :
       $currentView === 'settings' ? 'Settings' : 'Store'
@@ -373,6 +387,8 @@
         {/if}
       {:else if $currentView === 'shared'}
         <SharedWithMeView {vaultPath} />
+      {:else if $currentView === 'incoming'}
+        <IncomingView {vaultPath} />
       {:else if $currentView === 'contacts'}
         <ContactsView />
       {:else if $currentView === 'settings'}
@@ -417,6 +433,8 @@
     on:setPublic={(e) => handleSetPublic(e.detail)}
   />
 {/if}
+
+<PushToast />
 
 <style>
   .main {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { activePushCount } from '../stores/push';
 
   export let did: string;
   export let view: string;
@@ -12,6 +13,7 @@
 
   const navItems = [
     { id: 'files', icon: '📁', label: 'My Files' },
+    { id: 'incoming', icon: '📥', label: 'Incoming' },
     { id: 'shared', icon: '⬇️', label: 'Download' },
     { id: 'contacts', icon: '👤', label: 'Contacts' },
     { id: 'store', icon: '📦', label: 'Store' },
@@ -22,6 +24,7 @@
   function badgeFor(id: string): number {
     if (id === 'files') return fileCount;
     if (id === 'logs') return logCount;
+    if (id === 'incoming') return $activePushCount;
     return 0;
   }
 </script>
