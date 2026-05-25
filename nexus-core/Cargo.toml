@@ -25,6 +25,9 @@ hkdf = "0.12"
 # Error handling
 thiserror = "2"
 
+# Access control
+bitflags = { version = "2", features = ["serde"] }
+
 # Networking
 libp2p = { version = "0.54", features = [
     "tokio",
