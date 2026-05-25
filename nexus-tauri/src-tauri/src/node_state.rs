@@ -4,12 +4,14 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use nexus_core::identity::IdentityKeypair;
-use nexus_core::network::{NexusNode, NodeConfig, NodeCommand, NodeEvent, PeerId};
+use nexus_core::network::{NexusNode, NodeConfig, NodeCommand, NodeEvent, PeerId, PushSessionManager};
 use nexus_core::network::protocol::NexusResponse;
 use nexus_core::storage::ReceivedFiles;
+use nexus_core::access::{ContactStore, FolderStore, GroupStore};
 
 const RECEIVED_FILES_PATH: &str = ".nexus-received.json";
 const RECEIVED_MANIFESTS_DIR: &str = ".nexus-received-manifests";
+const STORE_DIR: &str = ".nexus-store";
 
 /// Shared node state managed by Tauri
 pub struct NodeState {
@@ -181,6 +183,18 @@ struct FileReceivedPayload {
     from: String,
 }
 
+/// Payload for push progress events sent to frontend
+#[derive(Debug, Clone, Serialize)]
+struct PushProgressPayload {
+    session_id: String,
+    sender_did: String,
+    filename: String,
+    shards_received: usize,
+    shards_total: usize,
+    status: String, // "accepted", "progress", "stored", "denied", "failed"
+    reason: Option<String>,
+}
+
 /// Spawn a task that processes incoming node events
 fn spawn_event_handler(
     mut event_rx: mpsc::Receiver<NodeEvent>,
@@ -191,6 +205,9 @@ fn spawn_event_handler(
     tokio::spawn(async move {
         // Ensure the received manifests directory exists
         let _ = std::fs::create_dir_all(RECEIVED_MANIFESTS_DIR);
+
+        // Push session manager for the authorized push protocol
+        let mut push_mgr = PushSessionManager::new();
 
         while let Some(event) = event_rx.recv().await {
             // Emit log events for key node events
@@ -464,6 +481,280 @@ fn spawn_event_handler(
                         response,
                     });
                 }
+
+                // ─── Authorized Push Protocol ──────────────────────────────────
+
+                NodeEvent::PushRequested {
+                    peer,
+                    sender_did,
+                    target_folder,
+                    filename,
+                    total_size,
+                    shard_count,
+                    manifest_hash,
+                    signature,
+                    nonce,
+                    timestamp,
+                    channel,
+                } => {
+                    // Load access stores fresh each time (they're cheap JSON reads)
+                    let contacts_res = ContactStore::open(STORE_DIR);
+                    let folders_res = FolderStore::open(STORE_DIR);
+                    let groups_res = GroupStore::open(STORE_DIR);
+
+                    let (contacts, folders, groups) = match (contacts_res, folders_res, groups_res) {
+                        (Ok(c), Ok(f), Ok(g)) => (c, f, g),
+                        _ => {
+                            let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                level: "error".into(),
+                                source: "Push".into(),
+                                message: "Failed to load access stores".into(),
+                                detail: None,
+                            });
+                            let _ = command_tx.send(NodeCommand::Respond {
+                                channel,
+                                response: NexusResponse::PushDenied {
+                                    reason: "Internal error: access stores unavailable".into(),
+                                },
+                            }).await;
+                            continue;
+                        }
+                    };
+
+                    match push_mgr.accept_push(
+                        &sender_did,
+                        &target_folder,
+                        &filename,
+                        total_size,
+                        shard_count,
+                        &manifest_hash,
+                        &nonce,
+                        timestamp,
+                        &signature,
+                        &contacts,
+                        &folders,
+                        &groups,
+                    ) {
+                        Ok(session_id) => {
+                            let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                level: "info".into(),
+                                source: "Push".into(),
+                                message: format!("Push accepted from {}", &peer.to_string()[..16]),
+                                detail: Some(format!(
+                                    "session: {}, file: {}, folder: {}, shards: {}",
+                                    session_id, filename, target_folder, shard_count
+                                )),
+                            });
+                            let _ = app_handle.emit("nexus://push-progress", PushProgressPayload {
+                                session_id: session_id.clone(),
+                                sender_did: sender_did.clone(),
+                                filename: filename.clone(),
+                                shards_received: 0,
+                                shards_total: shard_count,
+                                status: "accepted".into(),
+                                reason: None,
+                            });
+                            let _ = command_tx.send(NodeCommand::Respond {
+                                channel,
+                                response: NexusResponse::PushAccepted { session_id },
+                            }).await;
+                        }
+                        Err(e) => {
+                            let reason = e.to_string();
+                            let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                level: "warn".into(),
+                                source: "Push".into(),
+                                message: format!("Push denied from {}", &peer.to_string()[..16]),
+                                detail: Some(reason.clone()),
+                            });
+                            let _ = command_tx.send(NodeCommand::Respond {
+                                channel,
+                                response: NexusResponse::PushDenied { reason },
+                            }).await;
+                        }
+                    }
+                }
+
+                NodeEvent::PushDataReceived {
+                    peer: _,
+                    session_id,
+                    shard_index,
+                    cid,
+                    data,
+                    channel,
+                } => {
+                    match push_mgr.receive_shard(&session_id, shard_index, cid.clone(), data) {
+                        Ok(complete) => {
+                            // Emit progress
+                            if let Some(session) = push_mgr.get(&session_id) {
+                                let _ = app_handle.emit("nexus://push-progress", PushProgressPayload {
+                                    session_id: session_id.clone(),
+                                    sender_did: session.sender_did.clone(),
+                                    filename: session.filename.clone(),
+                                    shards_received: session.received_shards.len(),
+                                    shards_total: session.shard_count,
+                                    status: if complete { "complete".into() } else { "progress".into() },
+                                    reason: None,
+                                });
+                            }
+
+                            let _ = command_tx.send(NodeCommand::Respond {
+                                channel,
+                                response: NexusResponse::PushShardAck { session_id, shard_index },
+                            }).await;
+                        }
+                        Err(e) => {
+                            let reason = e.to_string();
+                            let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                level: "error".into(),
+                                source: "Push".into(),
+                                message: format!("Push shard error: {}", reason),
+                                detail: Some(format!("session: {}, shard: {}", session_id, shard_index)),
+                            });
+                            let _ = command_tx.send(NodeCommand::Respond {
+                                channel,
+                                response: NexusResponse::PushFailed { session_id, reason },
+                            }).await;
+                        }
+                    }
+                }
+
+                NodeEvent::PushCompleteReceived {
+                    peer,
+                    session_id,
+                    manifest,
+                    channel,
+                } => {
+                    match push_mgr.finalize(&session_id) {
+                        Ok(session) => {
+                            // Write all received shards to the shard store
+                            if let Ok(shard_store) = nexus_core::storage::ShardStore::open(STORE_DIR) {
+                                for (_idx, (cid, data)) in &session.received_shards {
+                                    let shard = nexus_core::storage::shard::Shard {
+                                        cid: nexus_core::storage::compute_cid(data),
+                                        data: data.clone(),
+                                    };
+                                    let _ = shard_store.put(&shard);
+                                    let _ = cid; // CID from sender used for protocol only
+                                }
+                            }
+
+                            // Store the manifest in the asset store
+                            let asset_store = nexus_core::storage::AssetStore::open(STORE_DIR);
+                            let (asset_id, stored_ok) = match asset_store {
+                                Ok(store) => {
+                                    match store.put_manifest(&manifest) {
+                                        Ok(id) => (id, true),
+                                        Err(e) => {
+                                            let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                                level: "error".into(),
+                                                source: "Push".into(),
+                                                message: "Failed to store manifest".into(),
+                                                detail: Some(e.to_string()),
+                                            });
+                                            (String::new(), false)
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                        level: "error".into(),
+                                        source: "Push".into(),
+                                        message: "Failed to open asset store".into(),
+                                        detail: Some(e.to_string()),
+                                    });
+                                    (String::new(), false)
+                                }
+                            };
+
+                            if stored_ok {
+                                // Also record in received files for the UI
+                                let filename = session.filename.clone();
+                                let received = ReceivedFiles::open(RECEIVED_FILES_PATH);
+                                let manifest_path = format!(
+                                    "{}/{}.nexus",
+                                    RECEIVED_MANIFESTS_DIR, asset_id
+                                );
+                                let _ = std::fs::create_dir_all(RECEIVED_MANIFESTS_DIR);
+                                let _ = std::fs::write(&manifest_path, &manifest);
+                                let _ = received.add(
+                                    session.sender_did.clone(),
+                                    peer.to_string(),
+                                    filename.clone(),
+                                    manifest_path,
+                                    None, // share_grant is implicit via push auth
+                                );
+
+                                let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                    level: "success".into(),
+                                    source: "Push".into(),
+                                    message: format!("Push complete: {}", filename),
+                                    detail: Some(format!(
+                                        "asset: {}, from: {}, folder: {}",
+                                        asset_id, session.sender_did, session.target_folder
+                                    )),
+                                });
+                                let _ = app_handle.emit("nexus://push-progress", PushProgressPayload {
+                                    session_id: session_id.clone(),
+                                    sender_did: session.sender_did.clone(),
+                                    filename: filename.clone(),
+                                    shards_received: session.shard_count,
+                                    shards_total: session.shard_count,
+                                    status: "stored".into(),
+                                    reason: None,
+                                });
+                                let _ = app_handle.emit("nexus://file-received", FileReceivedPayload {
+                                    filename,
+                                    from: peer.to_string(),
+                                });
+                                let _ = command_tx.send(NodeCommand::Respond {
+                                    channel,
+                                    response: NexusResponse::PushStored { session_id, asset_id },
+                                }).await;
+                            } else {
+                                let _ = command_tx.send(NodeCommand::Respond {
+                                    channel,
+                                    response: NexusResponse::PushFailed {
+                                        session_id,
+                                        reason: "Storage error".into(),
+                                    },
+                                }).await;
+                            }
+                        }
+                        Err(e) => {
+                            let reason = e.to_string();
+                            let _ = app_handle.emit("nexus://node-log", NodeLogPayload {
+                                level: "error".into(),
+                                source: "Push".into(),
+                                message: format!("Push finalize failed: {}", reason),
+                                detail: Some(format!("session: {}", session_id)),
+                            });
+                            let _ = app_handle.emit("nexus://push-progress", PushProgressPayload {
+                                session_id: session_id.clone(),
+                                sender_did: String::new(),
+                                filename: String::new(),
+                                shards_received: 0,
+                                shards_total: 0,
+                                status: "failed".into(),
+                                reason: Some(reason.clone()),
+                            });
+                            let _ = command_tx.send(NodeCommand::Respond {
+                                channel,
+                                response: NexusResponse::PushFailed { session_id, reason },
+                            }).await;
+                        }
+                    }
+                }
+
+                // Push responses (when we are the sender)
+                NodeEvent::PushResponse { peer, response } => {
+                    // Forward to any waiting push command
+                    let _ = pull_response_tx.send(PullResponse {
+                        peer,
+                        response,
+                    });
+                }
+
                 _ => {}
             }
         }
