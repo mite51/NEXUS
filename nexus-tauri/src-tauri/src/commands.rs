@@ -133,6 +133,83 @@ fn save_contacts(file: &ContactsFile) -> Result<(), String> {
     Ok(())
 }
 
+/// Sync a UI contact to the ACL contact store (for push authorization).
+/// Creates or updates the entry. Best-effort — won't fail if ACL store has issues.
+fn sync_contact_to_acl(did: &str, label: &str, peer_id: Option<&str>, pre_pk_hex: Option<&str>) {
+    use nexus_core::access::contact::ContactStore;
+    use nexus_core::access::permission::Permission;
+
+    // Ensure root folder exists for push auth
+    ensure_root_folder();
+
+    let Ok(mut store) = ContactStore::open(STORE_DIR) else { return };
+
+    let pre_pk = pre_pk_hex
+        .and_then(|h| hex_decode(h).ok())
+        .unwrap_or_default();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Check if contact already exists
+    if let Some(existing) = store.get_mut(did) {
+        // Update peer_id and pre_pk if needed
+        if let Some(pid) = peer_id {
+            existing.peer_id = Some(pid.to_string());
+        }
+        if !pre_pk.is_empty() {
+            existing.pre_pk = pre_pk.clone();
+        }
+        existing.updated_at = now;
+        let _ = store.save();
+    } else {
+        let contact = nexus_core::access::contact::Contact {
+            did: did.to_string(),
+            label: label.to_string(),
+            peer_id: peer_id.map(|s| s.to_string()),
+            pre_pk,
+            access: Permission::WRITE,  // Default: allow push
+            groups: vec![],
+            created_at: now,
+            updated_at: now,
+        };
+        let _ = store.add(contact);
+    }
+}
+
+/// Ensure a default root folder exists in the ACL folder store (for push auth).
+fn ensure_root_folder() {
+    use nexus_core::access::folder::{FolderStore, VaultFolder};
+    use nexus_core::access::permission::Permission;
+
+    let Ok(mut store) = FolderStore::open(STORE_DIR) else { return };
+    if store.get("/").is_none() {
+        let folder = VaultFolder {
+            path: "/".to_string(),
+            label: Some("Root".to_string()),
+            default_access: Permission::WRITE,
+            grants: vec![],
+            inherit: true,
+        };
+        let _ = store.create_folder(folder);
+    }
+}
+
+/// Sync ALL legacy contacts to the ACL store (called on node start).
+fn sync_all_contacts_to_acl() {
+    let file = load_contacts();
+    for contact in &file.contacts {
+        sync_contact_to_acl(
+            &contact.did,
+            &contact.name,
+            contact.peer_id.as_deref(),
+            contact.pre_public_key_hex.as_deref(),
+        );
+    }
+}
+
 // --- Tauri Commands ---
 
 #[tauri::command]
@@ -427,6 +504,10 @@ pub fn add_contact(name: &str, did: &str, pre_public_key_hex: Option<&str>, peer
 
     file.contacts.push(contact.clone());
     save_contacts(&file)?;
+
+    // Sync to ACL contact store so push auth recognizes this contact
+    sync_contact_to_acl(did, name, peer_id, pre_public_key_hex);
+
     Ok(contact)
 }
 
@@ -462,6 +543,10 @@ pub fn update_contact(did: &str, name: Option<&str>, pre_public_key_hex: Option<
 
     let updated = contact.clone();
     save_contacts(&file)?;
+
+    // Sync updated info to ACL store
+    sync_contact_to_acl(did, updated.name.as_str(), updated.peer_id.as_deref(), updated.pre_public_key_hex.as_deref());
+
     Ok(updated)
 }
 
@@ -547,7 +632,7 @@ pub fn accept_join_request(vault_path: &str, passphrase: &str, my_name: &str, re
     if !file.contacts.iter().any(|c| c.peer_id.as_deref() == Some(&request.peer_id)) {
         let contact = Contact {
             name: request.name.clone(),
-            did: their_did,
+            did: their_did.clone(),
             pre_public_key_hex: request.pre_public_key_hex.clone(),
             pre_seed_encrypted: if request.pre_public_key_hex.is_none() {
                 None // They didn't provide a key, we can't share with them yet
@@ -561,6 +646,10 @@ pub fn accept_join_request(vault_path: &str, passphrase: &str, my_name: &str, re
         };
         file.contacts.push(contact);
         save_contacts(&file)?;
+
+        // Sync to ACL store
+        let acl_pre = request.pre_public_key_hex.as_deref();
+        sync_contact_to_acl(&their_did, &request.name, Some(&request.peer_id), acl_pre);
     }
 
     // Build join response with the PRE we generated for them
@@ -617,6 +706,15 @@ pub fn apply_join_response(response_json: &str) -> Result<String, String> {
     }
 
     save_contacts(&file)?;
+
+    // Sync to ACL store
+    sync_contact_to_acl(
+        &format!("did:nexus:peer-{}", &response.peer_id[..16.min(response.peer_id.len())]),
+        &response.name,
+        Some(&response.peer_id),
+        Some(&response.pre_public_key_hex),
+    );
+
     Ok(format!("Contact '{}' updated with PRE key", response.name))
 }
 
@@ -1193,18 +1291,16 @@ pub async fn push_to_peer(
     shard_manifest.filename = Some(filename.clone());
     let shard_count = shards.len();
 
-    // Look up receiver's PRE public key from contacts
-    let contact_store = nexus_core::access::contact::ContactStore::open(STORE_DIR)
-        .map_err(|e| format!("Failed to open contacts: {}", e))?;
-    let all_contacts = contact_store.list();
-    let receiver_contact = all_contacts.iter()
+    // Look up receiver's PRE public key from UI contacts (.nexus-contacts.json)
+    let contacts_file = load_contacts();
+    let receiver_contact = contacts_file.contacts.iter()
         .find(|c| c.peer_id.as_deref() == Some(target_peer_id))
         .ok_or_else(|| format!("No contact with peer_id: {}", target_peer_id))?;
 
-    if receiver_contact.pre_pk.is_empty() {
-        return Err(format!("Contact '{}' has no PRE public key", receiver_contact.label));
-    }
-    let receiver_pre_pk = PrePublicKey { bytes: receiver_contact.pre_pk.clone() };
+    let pre_pk_hex = receiver_contact.pre_public_key_hex.as_deref()
+        .ok_or_else(|| format!("Contact '{}' has no PRE public key", receiver_contact.name))?;
+    let pre_pk_bytes = hex_decode(pre_pk_hex)?;
+    let receiver_pre_pk = PrePublicKey { bytes: pre_pk_bytes };
 
     // Encrypt DEK for receiver
     let encrypted_dek = PreKeypair::encrypt_dek_for(&receiver_pre_pk, &dek)
@@ -1416,6 +1512,9 @@ pub async fn start_node(
 
     let relay_addrs: Vec<String> = saved.relay_servers.iter().map(|e| e.addr.clone()).collect();
     eprintln!("[start_node] Config loaded - relay_servers: {:?}, port: {}", relay_addrs, port);
+
+    // Sync all legacy contacts to ACL store on startup
+    sync_all_contacts_to_acl();
 
     let config = NodeConfig {
         listen_addrs: vec![
