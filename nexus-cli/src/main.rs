@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod commands;
+mod access_commands;
 
 /// NEXUS — Decentralized encrypted file ownership
 #[derive(Parser)]
@@ -153,6 +154,21 @@ enum Commands {
         #[command(subcommand)]
         action: StoreAction,
     },
+    /// Manage access-control contacts
+    Contact {
+        #[command(subcommand)]
+        action: ContactAction,
+    },
+    /// Manage access-control groups
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+    /// Manage vault folders and grants
+    Folder {
+        #[command(subcommand)]
+        action: FolderAction,
+    },
     /// Mark an asset as public (generates public PRE rfrag)
     MakePublic {
         /// Asset ID (hex hash)
@@ -221,6 +237,187 @@ enum StoreAction {
     },
 }
 
+#[derive(Subcommand)]
+enum ContactAction {
+    /// Add a new access-control contact
+    Add {
+        /// Contact's DID
+        did: String,
+        /// Display label
+        #[arg(long)]
+        label: String,
+        /// Access level (none, read, rw, full, or 0-7)
+        #[arg(long, default_value = "read")]
+        access: String,
+        /// Store directory
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+        /// Peer ID (optional)
+        #[arg(long)]
+        peer_id: Option<String>,
+    },
+    /// Remove a contact
+    Remove {
+        /// Contact's DID
+        did: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// List all contacts
+    List {
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Show details of a contact
+    Show {
+        /// Contact's DID
+        did: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Set a contact's access level
+    SetAccess {
+        /// Contact's DID
+        did: String,
+        /// New access level
+        access: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum GroupAction {
+    /// Create a new group
+    Create {
+        /// Group name
+        name: String,
+        /// Description
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Delete a group
+    Delete {
+        /// Group name
+        name: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Add a member (DID) to a group
+    AddMember {
+        /// Group name
+        group: String,
+        /// Member DID
+        did: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Remove a member from a group
+    RemoveMember {
+        /// Group name
+        group: String,
+        /// Member DID
+        did: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// List all groups
+    List {
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Show a group's members
+    Show {
+        /// Group name
+        name: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FolderAction {
+    /// Create a vault folder
+    Create {
+        /// Folder path (must start with /)
+        path: String,
+        /// Display label
+        #[arg(long)]
+        label: Option<String>,
+        /// Default access for unlisted contacts (none, read, rw, full)
+        #[arg(long, default_value = "none")]
+        default_access: String,
+        /// Inherit permissions from parent folder
+        #[arg(long, default_value_t = true)]
+        inherit: bool,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Remove a vault folder
+    Remove {
+        /// Folder path
+        path: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// List all folders
+    List {
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Show a folder's details and grants
+    Show {
+        /// Folder path
+        path: String,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Grant access on a folder (or asset within it)
+    Grant {
+        /// Folder path
+        path: String,
+        /// Grantee DID (or group name with --group)
+        grantee: String,
+        /// Access level (none, read, rw, full)
+        #[arg(long, default_value = "read")]
+        access: String,
+        /// Grant to a group instead of a contact
+        #[arg(long, default_value_t = false)]
+        group: bool,
+        /// Asset ID (grants at asset level within the folder)
+        #[arg(long)]
+        asset: Option<String>,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Revoke a grant on a folder
+    Revoke {
+        /// Folder path
+        path: String,
+        /// Grantee DID (or group name with --group)
+        grantee: String,
+        /// Grantee is a group
+        #[arg(long, default_value_t = false)]
+        group: bool,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+    /// Check effective permission for a DID
+    Check {
+        /// DID to check
+        did: String,
+        /// Folder path
+        path: String,
+        /// Asset ID (optional, check at asset level)
+        #[arg(long)]
+        asset: Option<String>,
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+    },
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -265,6 +462,48 @@ fn main() {
             StoreAction::List { dir } => commands::store_list(&dir),
             StoreAction::Import { manifest, from, dir } => commands::store_import(&manifest, &from, &dir),
             StoreAction::Verify { dir } => commands::store_verify(&dir),
+        },
+        Commands::Contact { action } => match action {
+            ContactAction::Add { did, label, access, dir, peer_id } => {
+                access_commands::contact_add(&dir, &did, &label, &access, peer_id.as_deref())
+            }
+            ContactAction::Remove { did, dir } => access_commands::contact_remove(&dir, &did),
+            ContactAction::List { dir } => access_commands::contact_list(&dir),
+            ContactAction::Show { did, dir } => access_commands::contact_show(&dir, &did),
+            ContactAction::SetAccess { did, access, dir } => {
+                access_commands::contact_set_access(&dir, &did, &access)
+            }
+        },
+        Commands::Group { action } => match action {
+            GroupAction::Create { name, description, dir } => {
+                access_commands::group_create(&dir, &name, description.as_deref())
+            }
+            GroupAction::Delete { name, dir } => access_commands::group_delete(&dir, &name),
+            GroupAction::AddMember { group, did, dir } => {
+                access_commands::group_add_member(&dir, &group, &did)
+            }
+            GroupAction::RemoveMember { group, did, dir } => {
+                access_commands::group_remove_member(&dir, &group, &did)
+            }
+            GroupAction::List { dir } => access_commands::group_list(&dir),
+            GroupAction::Show { name, dir } => access_commands::group_show(&dir, &name),
+        },
+        Commands::Folder { action } => match action {
+            FolderAction::Create { path, label, default_access, inherit, dir } => {
+                access_commands::folder_create(&dir, &path, label.as_deref(), &default_access, inherit)
+            }
+            FolderAction::Remove { path, dir } => access_commands::folder_remove(&dir, &path),
+            FolderAction::List { dir } => access_commands::folder_list(&dir),
+            FolderAction::Show { path, dir } => access_commands::folder_show(&dir, &path),
+            FolderAction::Grant { path, grantee, access, group, asset, dir } => {
+                access_commands::folder_grant(&dir, &path, &grantee, &access, asset.as_deref(), group)
+            }
+            FolderAction::Revoke { path, grantee, group, dir } => {
+                access_commands::folder_revoke(&dir, &path, &grantee, group)
+            }
+            FolderAction::Check { did, path, asset, dir } => {
+                access_commands::folder_check(&dir, &did, &path, asset.as_deref())
+            }
         },
         Commands::MakePublic { asset_id, vault } => {
             commands::make_public(&asset_id, &vault)

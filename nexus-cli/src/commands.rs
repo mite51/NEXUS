@@ -655,6 +655,46 @@ pub async fn run_node(vault_path: &str, listen_addrs: &[String], bootstrap: &[St
                     response,
                 }).await;
             }
+            // Push protocol events (handled by app layer, not CLI node demo)
+            Some(NodeEvent::PushRequested { peer, sender_did, target_folder, channel, .. }) => {
+                println!("  📥 Push request from {} (DID: {}) → {}", &peer.to_string()[..16.min(peer.to_string().len())], sender_did, target_folder);
+                // In the CLI demo node, reject pushes (no push session manager wired up)
+                let _ = node.command_tx.send(
+                    nexus_core::network::NodeCommand::RespondShard {
+                        channel,
+                        response: nexus_core::network::protocol::NexusResponse::PushDenied {
+                            reason: "CLI node does not accept pushes (use the full app)".into(),
+                        },
+                    }
+                ).await;
+            }
+            Some(NodeEvent::PushDataReceived { peer, session_id, channel, .. }) => {
+                println!("  📦 Push data for session {} from {}", session_id, &peer.to_string()[..16.min(peer.to_string().len())]);
+                let _ = node.command_tx.send(
+                    nexus_core::network::NodeCommand::RespondShard {
+                        channel,
+                        response: nexus_core::network::protocol::NexusResponse::PushFailed {
+                            session_id,
+                            reason: "Not supported in CLI demo".into(),
+                        },
+                    }
+                ).await;
+            }
+            Some(NodeEvent::PushCompleteReceived { peer, session_id, channel, .. }) => {
+                println!("  ✓ Push complete signal for session {} from {}", session_id, &peer.to_string()[..16.min(peer.to_string().len())]);
+                let _ = node.command_tx.send(
+                    nexus_core::network::NodeCommand::RespondShard {
+                        channel,
+                        response: nexus_core::network::protocol::NexusResponse::PushFailed {
+                            session_id,
+                            reason: "Not supported in CLI demo".into(),
+                        },
+                    }
+                ).await;
+            }
+            Some(NodeEvent::PushResponse { peer, response }) => {
+                println!("  📤 Push response from {}: {:?}", &peer.to_string()[..16.min(peer.to_string().len())], response);
+            }
             None => {
                 println!("  Node event channel closed — shutting down.");
                 break;
