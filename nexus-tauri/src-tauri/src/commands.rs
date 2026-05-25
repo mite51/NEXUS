@@ -1343,18 +1343,28 @@ pub async fn push_to_peer(
     // Subscribe to push responses
     let mut push_rx = state.subscribe_pull_responses();
 
-    // Dial target through relays if configured
-    let saved_config = get_config();
-    let relay_addrs: Vec<String> = saved_config.relay_servers.iter().map(|e| e.addr.clone()).collect();
+    // Dial target through relay circuit
+    // Prefer contact's stored relay_addrs, fall back to global config
+    let contact_relays = receiver_contact.relay_addrs.clone().unwrap_or_default();
+    let global_relays: Vec<String> = get_config().relay_servers.iter().map(|e| e.addr.clone()).collect();
+    let relay_addrs: Vec<String> = if !contact_relays.is_empty() {
+        contact_relays
+    } else {
+        global_relays
+    };
+
     for relay_addr_str in &relay_addrs {
-        let circuit_addr_str = format!("{}/p2p-circuit/p2p/{}", relay_addr_str, target_peer);
-        if let Ok(circuit_addr) = circuit_addr_str.parse::<nexus_core::network::Multiaddr>() {
-            let _ = cmd_tx.send(NodeCommand::Dial(circuit_addr)).await;
+        if let Ok(relay_ma) = relay_addr_str.parse::<nexus_core::network::Multiaddr>() {
+            eprintln!("[push] Hole-punching via relay: {} -> {}", relay_addr_str, target_peer);
+            let _ = cmd_tx.send(NodeCommand::HolePunch {
+                peer: target_peer,
+                relay_addr: relay_ma,
+            }).await;
         }
     }
 
-    // Brief wait for connection establishment
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Wait for circuit connection to establish
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
     // Emit initial progress
     let _ = app_handle.emit("nexus://push-send-progress", PushSendProgress {
