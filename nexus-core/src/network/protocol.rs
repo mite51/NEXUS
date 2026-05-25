@@ -31,6 +31,51 @@ pub enum NexusRequest {
     },
     /// Ping (health check)
     Ping,
+
+    // ─── Authorized Push Protocol ───────────────────────────────────────────
+
+    /// Request to push an asset (sender → receiver)
+    /// Receiver validates auth before accepting.
+    PushRequest {
+        /// Sender's DID (used for auth + signature verification)
+        sender_did: String,
+        /// Target folder on receiver's vault
+        target_folder: String,
+        /// Display filename
+        filename: String,
+        /// Total uncompressed size in bytes
+        total_size: u64,
+        /// Number of shards that will follow
+        shard_count: usize,
+        /// CID of the manifest (for integrity verification)
+        manifest_hash: String,
+        /// Ed25519 signature of (sender_did ‖ target_folder ‖ manifest_hash ‖ nonce ‖ timestamp)
+        signature: Vec<u8>,
+        /// Nonce (prevents replay)
+        nonce: Vec<u8>,
+        /// Unix timestamp (seconds) — requests older than 60s are rejected
+        timestamp: u64,
+    },
+
+    /// Stream shard data as part of an accepted push session
+    PushData {
+        /// Session ID from PushAccepted
+        session_id: String,
+        /// Shard index (0-based, matches manifest ordering)
+        shard_index: usize,
+        /// Shard CID
+        cid: String,
+        /// Shard bytes
+        data: Vec<u8>,
+    },
+
+    /// Signal push is complete (all shards sent)
+    PushComplete {
+        /// Session ID
+        session_id: String,
+        /// Encrypted manifest bytes
+        manifest: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +104,38 @@ pub enum NexusResponse {
     AssetDenied { asset_id: String, reason: String },
     /// Pong (health check response)
     Pong,
+
+    // ─── Authorized Push Protocol Responses ──────────────────────────────────
+
+    /// Push request accepted — sender may begin streaming shards
+    PushAccepted {
+        /// Unique session ID for this push transfer
+        session_id: String,
+    },
+
+    /// Push request denied (unknown contact, bad folder, insufficient perms)
+    PushDenied {
+        reason: String,
+    },
+
+    /// Acknowledgement that a shard was received during push
+    PushShardAck {
+        session_id: String,
+        shard_index: usize,
+    },
+
+    /// Push fully stored — asset is now in the vault
+    PushStored {
+        session_id: String,
+        asset_id: String,
+    },
+
+    /// Push failed mid-transfer
+    PushFailed {
+        session_id: String,
+        reason: String,
+    },
+
     /// Error
     Error { message: String },
 }

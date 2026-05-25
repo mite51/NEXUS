@@ -122,6 +122,47 @@ pub enum NodeEvent {
         signature: Vec<u8>,
         channel: request_response::ResponseChannel<NexusResponse>,
     },
+
+    // ─── Authorized Push Events ───────────────────────────────────────────
+
+    /// A peer wants to push an asset to us (needs auth check)
+    PushRequested {
+        peer: PeerId,
+        sender_did: String,
+        target_folder: String,
+        filename: String,
+        total_size: u64,
+        shard_count: usize,
+        manifest_hash: String,
+        signature: Vec<u8>,
+        nonce: Vec<u8>,
+        timestamp: u64,
+        channel: request_response::ResponseChannel<NexusResponse>,
+    },
+
+    /// A peer is streaming shard data for an accepted push
+    PushDataReceived {
+        peer: PeerId,
+        session_id: String,
+        shard_index: usize,
+        cid: String,
+        data: Vec<u8>,
+        channel: request_response::ResponseChannel<NexusResponse>,
+    },
+
+    /// A peer signals their push is complete
+    PushCompleteReceived {
+        peer: PeerId,
+        session_id: String,
+        manifest: Vec<u8>,
+        channel: request_response::ResponseChannel<NexusResponse>,
+    },
+
+    /// Response to our push request (accepted or denied)
+    PushResponse {
+        peer: PeerId,
+        response: NexusResponse,
+    },
 }
 
 /// Commands that can be sent to the node
@@ -162,6 +203,44 @@ pub enum NodeCommand {
     RespondShard {
         channel: request_response::ResponseChannel<NexusResponse>,
         response: NexusResponse,
+    },
+
+    /// Respond to any request (generic)
+    Respond {
+        channel: request_response::ResponseChannel<NexusResponse>,
+        response: NexusResponse,
+    },
+
+    // ─── Authorized Push Commands ─────────────────────────────────────────
+
+    /// Initiate a push to a remote peer
+    PushRequest {
+        peer: PeerId,
+        sender_did: String,
+        target_folder: String,
+        filename: String,
+        total_size: u64,
+        shard_count: usize,
+        manifest_hash: String,
+        signature: Vec<u8>,
+        nonce: Vec<u8>,
+        timestamp: u64,
+    },
+
+    /// Send a shard as part of an ongoing push
+    PushData {
+        peer: PeerId,
+        session_id: String,
+        shard_index: usize,
+        cid: String,
+        data: Vec<u8>,
+    },
+
+    /// Signal push completion
+    PushComplete {
+        peer: PeerId,
+        session_id: String,
+        manifest: Vec<u8>,
     },
     /// Get our listening addresses
     GetListeningAddrs(tokio::sync::oneshot::Sender<Vec<Multiaddr>>),
@@ -349,6 +428,42 @@ impl NexusNode {
                             NodeCommand::RespondShard { channel, response } => {
                                 let _ = swarm.behaviour_mut().request_response.send_response(channel, response);
                             }
+                            NodeCommand::Respond { channel, response } => {
+                                let _ = swarm.behaviour_mut().request_response.send_response(channel, response);
+                            }
+                            // --- Push protocol commands ---
+                            NodeCommand::PushRequest {
+                                peer, sender_did, target_folder, filename,
+                                total_size, shard_count, manifest_hash,
+                                signature, nonce, timestamp,
+                            } => {
+                                swarm.behaviour_mut().request_response.send_request(
+                                    &peer,
+                                    NexusRequest::PushRequest {
+                                        sender_did, target_folder, filename,
+                                        total_size, shard_count, manifest_hash,
+                                        signature, nonce, timestamp,
+                                    },
+                                );
+                            }
+                            NodeCommand::PushData {
+                                peer, session_id, shard_index, cid, data,
+                            } => {
+                                swarm.behaviour_mut().request_response.send_request(
+                                    &peer,
+                                    NexusRequest::PushData {
+                                        session_id, shard_index, cid, data,
+                                    },
+                                );
+                            }
+                            NodeCommand::PushComplete { peer, session_id, manifest } => {
+                                swarm.behaviour_mut().request_response.send_request(
+                                    &peer,
+                                    NexusRequest::PushComplete {
+                                        session_id, manifest,
+                                    },
+                                );
+                            }
                             NodeCommand::GetListeningAddrs(tx) => {
                                 let addrs: Vec<Multiaddr> = swarm.listeners().cloned().collect();
                                 let _ = tx.send(addrs);
@@ -481,6 +596,64 @@ impl NexusNode {
     pub async fn shutdown(self) -> Result<(), mpsc::error::SendError<NodeCommand>> {
         self.command_tx.send(NodeCommand::Shutdown).await
     }
+
+    // --- Authorized Push API ---
+
+    /// Initiate a push request to a remote peer
+    pub async fn push_request(
+        &self,
+        peer: PeerId,
+        sender_did: String,
+        target_folder: String,
+        filename: String,
+        total_size: u64,
+        shard_count: usize,
+        manifest_hash: String,
+        signature: Vec<u8>,
+        nonce: Vec<u8>,
+        timestamp: u64,
+    ) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::PushRequest {
+            peer, sender_did, target_folder, filename,
+            total_size, shard_count, manifest_hash,
+            signature, nonce, timestamp,
+        }).await
+    }
+
+    /// Send a shard as part of an active push session
+    pub async fn push_data(
+        &self,
+        peer: PeerId,
+        session_id: String,
+        shard_index: usize,
+        cid: String,
+        data: Vec<u8>,
+    ) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::PushData {
+            peer, session_id, shard_index, cid, data,
+        }).await
+    }
+
+    /// Signal that all shards have been sent, provide manifest
+    pub async fn push_complete(
+        &self,
+        peer: PeerId,
+        session_id: String,
+        manifest: Vec<u8>,
+    ) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::PushComplete {
+            peer, session_id, manifest,
+        }).await
+    }
+
+    /// Respond to any incoming request with a generic response
+    pub async fn respond(
+        &self,
+        channel: request_response::ResponseChannel<NexusResponse>,
+        response: NexusResponse,
+    ) -> Result<(), mpsc::error::SendError<NodeCommand>> {
+        self.command_tx.send(NodeCommand::Respond { channel, response }).await
+    }
 }
 
 /// Process a swarm event and emit NodeEvents
@@ -554,6 +727,44 @@ async fn handle_swarm_event(
                                 asset_id,
                                 requester_did,
                                 signature,
+                                channel,
+                            }).await;
+                        }
+                        // --- Authorized Push Protocol (inbound) ---
+                        NexusRequest::PushRequest {
+                            sender_did, target_folder, filename,
+                            total_size, shard_count, manifest_hash,
+                            signature, nonce, timestamp,
+                        } => {
+                            let _ = event_tx.send(NodeEvent::PushRequested {
+                                peer,
+                                sender_did,
+                                target_folder,
+                                filename,
+                                total_size,
+                                shard_count,
+                                manifest_hash,
+                                signature,
+                                nonce,
+                                timestamp,
+                                channel,
+                            }).await;
+                        }
+                        NexusRequest::PushData { session_id, shard_index, cid, data } => {
+                            let _ = event_tx.send(NodeEvent::PushDataReceived {
+                                peer,
+                                session_id,
+                                shard_index,
+                                cid,
+                                data,
+                                channel,
+                            }).await;
+                        }
+                        NexusRequest::PushComplete { session_id, manifest } => {
+                            let _ = event_tx.send(NodeEvent::PushCompleteReceived {
+                                peer,
+                                session_id,
+                                manifest,
                                 channel,
                             }).await;
                         }
