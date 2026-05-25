@@ -1348,24 +1348,33 @@ pub async fn push_to_peer(
     let mut push_rx = state.subscribe_pull_responses();
 
     // Dial target through relay circuit
-    // Prefer contact's stored relay_addrs, fall back to global config
+    // Collect all relay multiaddrs: from contact relay_addrs + global config
     let contact_relays = receiver_contact.relay_addrs.clone().unwrap_or_default();
     let global_relays: Vec<String> = get_config().relay_servers.iter().map(|e| e.addr.clone()).collect();
-    let relay_addrs: Vec<String> = if !contact_relays.is_empty() {
-        contact_relays
-    } else {
-        global_relays
-    };
 
-    for relay_addr_str in &relay_addrs {
+    // Merge both sources, dedup later
+    let mut all_relay_strs: Vec<String> = Vec::new();
+    all_relay_strs.extend(contact_relays);
+    all_relay_strs.extend(global_relays);
+
+    let mut dialed = false;
+    for relay_addr_str in &all_relay_strs {
         eprintln!("[push] Trying relay: {}", relay_addr_str);
+        // Try parsing as a full multiaddr first
         if let Ok(relay_ma) = relay_addr_str.parse::<nexus_core::network::Multiaddr>() {
             eprintln!("[push] Hole-punching via relay: {} -> {}", relay_addr_str, target_peer);
             let _ = cmd_tx.send(NodeCommand::HolePunch {
                 peer: target_peer,
                 relay_addr: relay_ma,
             }).await;
+            dialed = true;
+        } else {
+            eprintln!("[push] Relay addr not a valid multiaddr, skipping: {}", relay_addr_str);
         }
+    }
+
+    if !dialed {
+        eprintln!("[push] WARNING: No valid relay addresses found! Push will likely fail.");
     }
 
     // Wait for circuit connection to establish
