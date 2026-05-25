@@ -1265,6 +1265,8 @@ pub async fn push_to_peer(
     use nexus_core::network::protocol::NexusResponse;
     use nexus_core::storage::compute_cid;
 
+    eprintln!("[push] push_to_peer called: file={}, peer={}, folder={}", file_path, target_peer_id, target_folder);
+
     // Validate file
     if !Path::new(file_path).exists() {
         return Err(format!("File not found: {}", file_path));
@@ -1296,6 +1298,8 @@ pub async fn push_to_peer(
     let receiver_contact = contacts_file.contacts.iter()
         .find(|c| c.peer_id.as_deref() == Some(target_peer_id))
         .ok_or_else(|| format!("No contact with peer_id: {}", target_peer_id))?;
+
+    eprintln!("[push] Found contact: {} (relay_addrs: {:?})", receiver_contact.name, receiver_contact.relay_addrs);
 
     let pre_pk_hex = receiver_contact.pre_public_key_hex.as_deref()
         .ok_or_else(|| format!("Contact '{}' has no PRE public key", receiver_contact.name))?;
@@ -1354,6 +1358,7 @@ pub async fn push_to_peer(
     };
 
     for relay_addr_str in &relay_addrs {
+        eprintln!("[push] Trying relay: {}", relay_addr_str);
         if let Ok(relay_ma) = relay_addr_str.parse::<nexus_core::network::Multiaddr>() {
             eprintln!("[push] Hole-punching via relay: {} -> {}", relay_addr_str, target_peer);
             let _ = cmd_tx.send(NodeCommand::HolePunch {
