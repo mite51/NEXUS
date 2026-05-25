@@ -123,8 +123,24 @@ enum Commands {
         vault: String,
     },
     /// Send an encrypted file to a peer (push shards + manifest)
-    /// Start a relay server (helps NATted peers connect)
-    ///
+    Push {
+        /// File to push
+        file: String,
+        /// Target peer ID
+        #[arg(long)]
+        peer: String,
+        /// Target folder on receiver's vault
+        #[arg(long, default_value = "/")]
+        folder: String,
+        /// Direct multiaddr to dial the peer (overrides relay)
+        #[arg(long)]
+        addr: Option<String>,
+        /// Relay multiaddr (e.g. /ip4/1.2.3.4/tcp/4002/p2p/<relay-peer-id>)
+        #[arg(long)]
+        relay: Option<String>,
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+    },
     /// Pull an encrypted file using a nexus:// share link
     Pull {
         /// nexus:// share link (e.g. nexus://<peer-id>/asset/<asset-id>)
@@ -468,6 +484,10 @@ fn main() {
         Commands::Fetch { manifest, from, share, output, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(commands::fetch(&manifest, &from, share.as_deref(), output.as_deref(), &vault))
+        }
+        Commands::Push { file, peer, folder, addr, relay, vault } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(commands::push_file(&file, &peer, &folder, addr.as_deref(), relay.as_deref(), &vault))
         }
         Commands::Pull { link, output, addr, vault } => {
             let rt = tokio::runtime::Runtime::new().unwrap();

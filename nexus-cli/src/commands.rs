@@ -1494,6 +1494,261 @@ pub fn make_public(asset_id: &str, vault_path: &str) -> Result<(), String> {
 }
 
 /// Synchronize re-encryption fragments with access grants.
+// ─── Push (Sender Side) ──────────────────────────────────────────────────────
+
+/// Push an encrypted file to a remote peer using the authorized push protocol.
+///
+/// This encrypts the file locally, starts an ephemeral node, connects to the
+/// target peer (optionally via relay), and streams shards + manifest.
+pub async fn push_file(
+    file_path: &str,
+    target_peer_str: &str,
+    target_folder: &str,
+    addr_override: Option<&str>,
+    relay_addr: Option<&str>,
+    vault_path: &str,
+) -> Result<(), String> {
+    use nexus_core::network::protocol::{NexusResponse};
+    use nexus_core::storage::shard::{shard_data, DEFAULT_SHARD_SIZE};
+    use nexus_core::crypto::{generate_dek, encrypt_data};
+
+    // Validate file exists
+    if !Path::new(file_path).exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+
+    let filename = Path::new(file_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unnamed".into());
+
+    let file_data = fs::read(file_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let total_size = file_data.len() as u64;
+
+    println!("📤 NEXUS Push");
+    println!("  File: {} ({} bytes)", filename, total_size);
+    println!("  Target: {}...", &target_peer_str[..16.min(target_peer_str.len())]);
+    println!("  Folder: {}", target_folder);
+    println!();
+
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+    let my_did = keypair.did();
+    println!("  Sender DID: {}", my_did);
+
+    // Encrypt and shard the file
+    println!("  Encrypting and sharding...");
+    let dek = generate_dek();
+    let encrypted_data = encrypt_data(&file_data, &dek)
+        .map_err(|e| format!("Encryption failed: {:?}", e))?;
+    let (mut shard_manifest, shards) = shard_data(&encrypted_data, DEFAULT_SHARD_SIZE);
+    shard_manifest.filename = Some(filename.clone());
+    let shard_count = shards.len();
+    println!("  → {} shards", shard_count);
+
+    // Encrypt DEK with our PRE public key (so we can re-encrypt for recipients)
+    let encrypted_dek = pre_kp.encrypt_dek(&dek)
+        .map_err(|e| format!("DEK encryption failed: {:?}", e))?;
+
+    // Build manifest
+    let manifest = nexus_core::manifest::NexusManifest {
+        owner: my_did.clone(),
+        owner_pre_pk: pre_kp.public_key(),
+        shards: shard_manifest,
+        encrypted_dek,
+    };
+    let manifest_bytes = serde_json::to_vec(&manifest)
+        .map_err(|e| format!("Manifest serialization failed: {}", e))?;
+    let manifest_hash = hex_encode(&compute_cid(&manifest_bytes));
+
+    // Build auth signature: sign(sender_did ‖ target_folder ‖ manifest_hash ‖ nonce ‖ timestamp)
+    let nonce: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut sign_payload = Vec::new();
+    sign_payload.extend_from_slice(my_did.as_bytes());
+    sign_payload.extend_from_slice(target_folder.as_bytes());
+    sign_payload.extend_from_slice(manifest_hash.as_bytes());
+    sign_payload.extend_from_slice(&nonce);
+    sign_payload.extend_from_slice(&timestamp.to_le_bytes());
+    let signature = keypair.sign(&sign_payload);
+
+    // Parse target peer
+    let target_peer: libp2p::PeerId = target_peer_str.parse()
+        .map_err(|e| format!("Invalid peer ID: {}", e))?;
+
+    // Build relay servers list
+    let relay_servers: Vec<String> = relay_addr.map(|a| vec![a.to_string()]).unwrap_or_default();
+
+    // Start ephemeral node
+    println!("  Starting ephemeral node...");
+    let libp2p_keypair = keypair.to_libp2p_keypair();
+    let config = NodeConfig {
+        listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1".to_string()],
+        bootstrap_peers: vec![],
+        mdns_enabled: true,
+        relay_servers,
+        telemetry_enabled: false,
+        telemetry_dir: None,
+    };
+
+    let mut node = NexusNode::start(libp2p_keypair, config).await
+        .map_err(|e| format!("Failed to start node: {}", e))?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Dial target
+    let dial_addr: libp2p::Multiaddr = if let Some(addr_str) = addr_override {
+        addr_str.parse()
+            .map_err(|e| format!("Invalid address: {}", e))?
+    } else if let Some(relay) = relay_addr {
+        // Dial via relay: /p2p/<relay>/p2p-circuit/p2p/<target>
+        format!("{}/p2p-circuit/p2p/{}", relay, target_peer_str)
+            .parse()
+            .map_err(|e| format!("Failed to build relay addr: {}", e))?
+    } else {
+        format!("/ip4/127.0.0.1/udp/4001/quic-v1/p2p/{}", target_peer_str)
+            .parse()
+            .map_err(|e| format!("Failed to build addr: {}", e))?
+    };
+
+    println!("  Dialing {}...", dial_addr);
+    node.dial(dial_addr).await.map_err(|e| format!("Dial failed: {}", e))?;
+
+    // Wait for connection
+    let connected = tokio::time::timeout(Duration::from_secs(15), async {
+        while let Some(event) = node.event_rx.recv().await {
+            match event {
+                NodeEvent::PeerDiscovered(p) if p == target_peer => return true,
+                _ => {}
+            }
+        }
+        false
+    }).await.unwrap_or(false);
+
+    if !connected {
+        node.shutdown().await.ok();
+        return Err("Failed to connect to target peer within 15s".into());
+    }
+    println!("  ✅ Connected");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Send PushRequest
+    println!("  Sending push request...");
+    node.push_request(
+        target_peer,
+        my_did.clone(),
+        target_folder.to_string(),
+        filename.clone(),
+        total_size,
+        shard_count,
+        manifest_hash,
+        signature,
+        nonce,
+        timestamp,
+    ).await.map_err(|e| format!("Push request send failed: {}", e))?;
+
+    // Wait for PushAccepted or PushDenied
+    let session_id = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::ShardReceived { response, .. } = event {
+                match response {
+                    NexusResponse::PushAccepted { session_id } => {
+                        return Ok(session_id);
+                    }
+                    NexusResponse::PushDenied { reason } => {
+                        return Err(format!("Push denied: {}", reason));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err("Channel closed".to_string())
+    }).await
+        .map_err(|_| "Timeout waiting for push accept/deny".to_string())??
+        ;
+
+    println!("  ✅ Accepted (session: {}...)", &session_id[..16.min(session_id.len())]);
+
+    // Stream shards
+    println!("  Streaming {} shards...", shard_count);
+    for (i, shard) in shards.iter().enumerate() {
+        let cid_hex = hex_encode(&shard.cid);
+        node.push_data(
+            target_peer,
+            session_id.clone(),
+            i,
+            cid_hex,
+            shard.data.clone(),
+        ).await.map_err(|e| format!("Push shard {} failed: {}", i, e))?;
+
+        // Wait for ack
+        let _ack = tokio::time::timeout(Duration::from_secs(30), async {
+            while let Some(event) = node.event_rx.recv().await {
+                if let NodeEvent::ShardReceived { response, .. } = event {
+                    match response {
+                        NexusResponse::PushShardAck { shard_index, .. } if shard_index == i => {
+                            return Ok(());
+                        }
+                        NexusResponse::PushFailed { reason, .. } => {
+                            return Err(format!("Push failed at shard {}: {}", i, reason));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err("Channel closed".to_string())
+        }).await
+            .map_err(|_| format!("Timeout waiting for shard {} ack", i))??
+            ;
+
+        // Progress
+        print!("\r  [{}/{}] shards sent", i + 1, shard_count);
+        io::stdout().flush().ok();
+    }
+    println!();
+
+    // Send PushComplete
+    println!("  Finalizing...");
+    node.push_complete(
+        target_peer,
+        session_id.clone(),
+        manifest_bytes,
+    ).await.map_err(|e| format!("Push complete send failed: {}", e))?;
+
+    // Wait for PushStored
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(event) = node.event_rx.recv().await {
+            if let NodeEvent::ShardReceived { response, .. } = event {
+                match response {
+                    NexusResponse::PushStored { asset_id, .. } => {
+                        return Ok(asset_id);
+                    }
+                    NexusResponse::PushFailed { reason, .. } => {
+                        return Err(format!("Push failed at finalize: {}", reason));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err("Channel closed".to_string())
+    }).await
+        .map_err(|_| "Timeout waiting for storage confirmation".to_string())??
+        ;
+
+    node.shutdown().await.ok();
+
+    println!("  ✅ Push complete!");
+    println!("  Asset ID: {}", result);
+    println!();
+
+    Ok(())
+}
+
 ///
 /// For each asset in the store:
 /// - Contacts with READ+ access and a PRE public key get an rfrag generated
