@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod access_commands;
 mod node_state;
 mod relay_state;
 
@@ -52,6 +53,25 @@ fn main() {
             commands::start_relay,
             commands::stop_relay,
             commands::get_relay_info,
+            // Access control commands
+            access_commands::acl_contact_add,
+            access_commands::acl_contact_remove,
+            access_commands::acl_contact_list,
+            access_commands::acl_contact_get,
+            access_commands::acl_contact_set_access,
+            access_commands::acl_group_create,
+            access_commands::acl_group_delete,
+            access_commands::acl_group_list,
+            access_commands::acl_group_get,
+            access_commands::acl_group_add_member,
+            access_commands::acl_group_remove_member,
+            access_commands::acl_folder_create,
+            access_commands::acl_folder_remove,
+            access_commands::acl_folder_list,
+            access_commands::acl_folder_get,
+            access_commands::acl_folder_grant,
+            access_commands::acl_folder_revoke,
+            access_commands::acl_check_permission,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NEXUS");

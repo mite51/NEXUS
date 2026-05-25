@@ -72,6 +72,23 @@ impl IdentityKeypair {
     }
 }
 
+/// Verify an Ed25519 signature given a 32-byte public key, message, and 64-byte signature.
+pub fn verify_signature(public_key: &[u8; 32], message: &[u8], signature: &[u8]) -> bool {
+    use ed25519_dalek::Verifier;
+
+    let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+
+    let sig_bytes: [u8; 64] = match signature.try_into() {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+    verifying_key.verify(message, &sig).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

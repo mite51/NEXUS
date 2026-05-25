@@ -6,6 +6,6 @@ pub mod keypair;
 pub mod vault;
 pub mod did;
 
-pub use keypair::IdentityKeypair;
+pub use keypair::{IdentityKeypair, verify_signature};
 pub use vault::IdentityVault;
 pub use did::Did;

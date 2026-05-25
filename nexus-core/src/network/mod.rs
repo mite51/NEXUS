@@ -19,7 +19,7 @@ pub mod relay_server;
 
 pub use node::{NexusNode, NodeConfig, NodeEvent, NodeCommand};
 pub use behaviour::NexusBehaviour;
-pub use push::{PushSessionManager, PushSession, PushError};
+pub use push::{PushSessionManager, PushSession, PushError, build_push_signing_payload};
 pub use send_queue::{SendQueue, QueuedSend, SendStatus};
 pub use delivery::{spawn_delivery_worker, DeliveryConfig};
 pub use telemetry::{TelemetryCollector, TelemetryStats, ConnectivityEvent, NatStatus};

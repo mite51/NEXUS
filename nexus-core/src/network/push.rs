@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::access::{authorize_push, AuthError, ContactStore, FolderStore, GroupStore};
+use crate::identity::{Did, verify_signature};
 
 /// Unique identifier for an in-progress push session
 pub type SessionId = String;
@@ -102,6 +103,12 @@ pub enum PushError {
     #[error("nonce replay detected")]
     NonceReplay,
 
+    #[error("signature verification failed")]
+    SignatureInvalid,
+
+    #[error("cannot extract public key from DID")]
+    InvalidDid,
+
     #[error("rate limit exceeded for {did}")]
     RateLimited { did: String },
 
@@ -154,6 +161,7 @@ impl PushSessionManager {
         manifest_hash: &str,
         nonce: &[u8],
         timestamp: u64,
+        signature: &[u8],
         contacts: &ContactStore,
         folders: &FolderStore,
         groups: &GroupStore,
@@ -172,6 +180,25 @@ impl PushSessionManager {
         self.cleanup_nonces(now);
         if self.nonce_cache.contains_key(nonce) {
             return Err(PushError::NonceReplay);
+        }
+
+        // 3. Signature verification
+        //    Signing payload: sender_did ‖ target_folder ‖ manifest_hash ‖ nonce ‖ timestamp_bytes
+        if !signature.is_empty() {
+            let did = Did(sender_did.to_string());
+            let pub_key = did.to_public_key_bytes()
+                .ok_or(PushError::InvalidDid)?;
+
+            let mut signing_payload = Vec::new();
+            signing_payload.extend_from_slice(sender_did.as_bytes());
+            signing_payload.extend_from_slice(target_folder.as_bytes());
+            signing_payload.extend_from_slice(manifest_hash.as_bytes());
+            signing_payload.extend_from_slice(nonce);
+            signing_payload.extend_from_slice(&timestamp.to_le_bytes());
+
+            if !verify_signature(&pub_key, &signing_payload, signature) {
+                return Err(PushError::SignatureInvalid);
+            }
         }
 
         // 3. Rate limit check
@@ -329,6 +356,27 @@ fn generate_session_id() -> String {
     id
 }
 
+/// Build the canonical signing payload for a push request.
+///
+/// Payload = sender_did ‖ target_folder ‖ manifest_hash ‖ nonce ‖ timestamp_le_bytes
+///
+/// The sender signs this with their Ed25519 identity key before sending.
+pub fn build_push_signing_payload(
+    sender_did: &str,
+    target_folder: &str,
+    manifest_hash: &str,
+    nonce: &[u8],
+    timestamp: u64,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(sender_did.as_bytes());
+    payload.extend_from_slice(target_folder.as_bytes());
+    payload.extend_from_slice(manifest_hash.as_bytes());
+    payload.extend_from_slice(nonce);
+    payload.extend_from_slice(&timestamp.to_le_bytes());
+    payload
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,6 +449,7 @@ mod tests {
             "hash123",
             b"nonce1",
             now_secs(),
+            &[],
             &contacts,
             &folders,
             &groups,
@@ -424,6 +473,7 @@ mod tests {
             "hash123",
             b"nonce1",
             now_secs(),
+            &[],
             &contacts,
             &folders,
             &groups,
@@ -446,6 +496,7 @@ mod tests {
             "hash123",
             b"nonce1",
             now_secs(),
+            &[],
             &contacts,
             &folders,
             &groups,
@@ -469,6 +520,7 @@ mod tests {
             "hash123",
             b"nonce1",
             old_timestamp,
+            &[],
             &contacts,
             &folders,
             &groups,
@@ -487,13 +539,13 @@ mod tests {
         // First push succeeds
         mgr.accept_push(
             "did:nexus:alice", "/incoming", "a.bin", 100, 1, "h1",
-            nonce, now_secs(), &contacts, &folders, &groups,
+            nonce, now_secs(), &[], &contacts, &folders, &groups,
         ).unwrap();
 
         // Same nonce rejected
         let result = mgr.accept_push(
             "did:nexus:alice", "/incoming", "b.bin", 100, 1, "h2",
-            nonce, now_secs(), &contacts, &folders, &groups,
+            nonce, now_secs(), &[], &contacts, &folders, &groups,
         );
         assert!(matches!(result, Err(PushError::NonceReplay)));
     }
@@ -506,7 +558,7 @@ mod tests {
         let mut mgr = PushSessionManager::new();
         let session_id = mgr.accept_push(
             "did:nexus:alice", "/incoming", "test.bin", 1024, 3, "hash",
-            b"nonce-rx", now_secs(), &contacts, &folders, &groups,
+            b"nonce-rx", now_secs(), &[], &contacts, &folders, &groups,
         ).unwrap();
 
         // Receive shards
@@ -528,7 +580,7 @@ mod tests {
         let mut mgr = PushSessionManager::new();
         let session_id = mgr.accept_push(
             "did:nexus:alice", "/incoming", "test.bin", 1024, 3, "hash",
-            b"nonce-dup", now_secs(), &contacts, &folders, &groups,
+            b"nonce-dup", now_secs(), &[], &contacts, &folders, &groups,
         ).unwrap();
 
         mgr.receive_shard(&session_id, 0, "cid0".into(), vec![1]).unwrap();
@@ -545,18 +597,136 @@ mod tests {
 
         mgr.accept_push(
             "did:nexus:alice", "/incoming", "a.bin", 100, 1, "h1",
-            b"n1", now_secs(), &contacts, &folders, &groups,
+            b"n1", now_secs(), &[], &contacts, &folders, &groups,
         ).unwrap();
 
         mgr.accept_push(
             "did:nexus:alice", "/incoming", "b.bin", 100, 1, "h2",
-            b"n2", now_secs(), &contacts, &folders, &groups,
+            b"n2", now_secs(), &[], &contacts, &folders, &groups,
         ).unwrap();
 
         let result = mgr.accept_push(
             "did:nexus:alice", "/incoming", "c.bin", 100, 1, "h3",
-            b"n3", now_secs(), &contacts, &folders, &groups,
+            b"n3", now_secs(), &[], &contacts, &folders, &groups,
         );
         assert!(matches!(result, Err(PushError::TooManySessions { max: 2 })));
+    }
+
+    #[test]
+    fn test_signature_verification_valid() {
+        use crate::identity::IdentityKeypair;
+
+        let tmp = TempDir::new().unwrap();
+        let (mut contacts, _folders, groups) = setup(tmp.path());
+
+        // Generate a real keypair and derive DID
+        let kp = IdentityKeypair::generate();
+        let did_str = kp.did();
+
+        // Add this keypair's DID as a contact with write access
+        contacts.add(Contact {
+            did: did_str.clone(),
+            label: "Signer".to_string(),
+            peer_id: None,
+            pre_pk: vec![],
+            access: Permission::READ_WRITE,
+            groups: vec![],
+            created_at: 0,
+            updated_at: 0,
+        }).unwrap();
+
+        // Create a folder grant for this DID
+        let mut folder_store = FolderStore::open(tmp.path()).unwrap();
+        folder_store.add_grant("/incoming", AccessGrant {
+            target: GrantTarget::Folder("/incoming".to_string()),
+            grantee: Grantee::Contact(did_str.clone()),
+            level: Permission::READ_WRITE,
+            expires: None,
+        }).unwrap();
+
+        let mut mgr = PushSessionManager::new();
+        let nonce = b"sig-test-nonce";
+        let timestamp = now_secs();
+        let manifest_hash = "mhash123";
+        let target_folder = "/incoming";
+
+        // Build signing payload
+        let mut payload = Vec::new();
+        payload.extend_from_slice(did_str.as_bytes());
+        payload.extend_from_slice(target_folder.as_bytes());
+        payload.extend_from_slice(manifest_hash.as_bytes());
+        payload.extend_from_slice(nonce);
+        payload.extend_from_slice(&timestamp.to_le_bytes());
+
+        let signature = kp.sign(&payload);
+
+        let result = mgr.accept_push(
+            &did_str,
+            target_folder,
+            "signed.bin",
+            2048,
+            2,
+            manifest_hash,
+            nonce,
+            timestamp,
+            &signature,
+            &contacts,
+            &folder_store,
+            &groups,
+        );
+        assert!(result.is_ok(), "Valid signature should pass: {:?}", result);
+    }
+
+    #[test]
+    fn test_signature_verification_invalid() {
+        use crate::identity::IdentityKeypair;
+
+        let tmp = TempDir::new().unwrap();
+        let (mut contacts, _folders, groups) = setup(tmp.path());
+
+        // Generate a keypair
+        let kp = IdentityKeypair::generate();
+        let did_str = kp.did();
+
+        contacts.add(Contact {
+            did: did_str.clone(),
+            label: "Signer".to_string(),
+            peer_id: None,
+            pre_pk: vec![],
+            access: Permission::READ_WRITE,
+            groups: vec![],
+            created_at: 0,
+            updated_at: 0,
+        }).unwrap();
+
+        let mut folder_store = FolderStore::open(tmp.path()).unwrap();
+        folder_store.add_grant("/incoming", AccessGrant {
+            target: GrantTarget::Folder("/incoming".to_string()),
+            grantee: Grantee::Contact(did_str.clone()),
+            level: Permission::READ_WRITE,
+            expires: None,
+        }).unwrap();
+
+        let mut mgr = PushSessionManager::new();
+
+        // Provide a bad signature (random garbage)
+        let bad_sig = vec![0xDE; 64];
+
+        let result = mgr.accept_push(
+            &did_str,
+            "/incoming",
+            "bad-sig.bin",
+            1024,
+            1,
+            "hash",
+            b"nonce-badsig",
+            now_secs(),
+            &bad_sig,
+            &contacts,
+            &folder_store,
+            &groups,
+        );
+        assert!(matches!(result, Err(PushError::SignatureInvalid)),
+            "Bad signature should fail: {:?}", result);
     }
 }
