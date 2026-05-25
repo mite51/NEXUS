@@ -1547,9 +1547,22 @@ pub async fn push_file(
     let shard_count = shards.len();
     println!("  → {} shards", shard_count);
 
-    // Encrypt DEK with our PRE public key (so we can re-encrypt for recipients)
-    let encrypted_dek = pre_kp.encrypt_dek(&dek)
+    // Look up receiver's PRE public key from contacts
+    let contacts = load_contacts();
+    let receiver_contact = contacts.contacts.iter()
+        .find(|c| c.peer_id.as_deref() == Some(target_peer_str))
+        .ok_or_else(|| format!("No contact found with peer_id: {}", target_peer_str))?;
+
+    let receiver_pre_pk_hex = receiver_contact.pre_public_key_hex.as_ref()
+        .ok_or_else(|| format!("Contact '{}' has no PRE public key — complete the join handshake first", receiver_contact.name))?;
+
+    let receiver_pre_pk_bytes = hex_decode(receiver_pre_pk_hex)?;
+    let receiver_pre_pk = nexus_core::crypto::pre::PrePublicKey { bytes: receiver_pre_pk_bytes };
+
+    // Encrypt DEK with receiver's PRE public key (only they can decrypt)
+    let encrypted_dek = nexus_core::crypto::pre::PreKeypair::encrypt_dek_for(&receiver_pre_pk, &dek)
         .map_err(|e| format!("DEK encryption failed: {:?}", e))?;
+    println!("  Encrypted DEK for: {}", receiver_contact.name);
 
     // Build manifest
     let manifest = nexus_core::manifest::NexusManifest {

@@ -27,7 +27,7 @@ printf 'testpass\ntestpass\n' | nexus init --vault vault.json
 - **PeerID:** `12D3KooWKLeXas9R5uXZqjrMmHTEs29WRaNyFmXgBWohZsCGfR1J`
 - **Relay PeerID:** `12D3KooWDFaYV9rwnkAr72CYceoUzhLEoafTXB9MxRw4E7cD4rAv`
 - **Public IP:** `75.156.22.206`
-- **Relay port:** TCP 4002
+- **Relay port:** UDP 4001 (QUIC) — NOT TCP
 - **PRE Public Key:** `03e1cf049c79f9d3e580a782cca8e627157e92c56fb7a24f06c9b90fd2a2ea998e`
 
 ### Contact JSON (for join-request flow)
@@ -41,7 +41,7 @@ printf 'testpass\ntestpass\n' | nexus init --vault vault.json
 nexus push <FILE> \
   --peer <TARGET_PEER_ID> \
   --folder "/" \
-  --relay "/ip4/75.156.22.206/tcp/4002/p2p/12D3KooWDFaYV9rwnkAr72CYceoUzhLEoafTXB9MxRw4E7cD4rAv" \
+  --relay "/ip4/75.156.22.206/udp/4001/quic-v1/p2p/12D3KooWDFaYV9rwnkAr72CYceoUzhLEoafTXB9MxRw4E7cD4rAv" \
   --vault vault.json
 ```
 
@@ -51,13 +51,13 @@ cd /tmp/nexus-neo
 printf 'testpass\n' | nexus push test-push.txt \
   --peer "12D3KooWKLeXas9R5uXZqjrMmHTEs29WRaNyFmXgBWohZsCGfR1J" \
   --folder "/" \
-  --relay "/ip4/75.156.22.206/tcp/4002/p2p/12D3KooWDFaYV9rwnkAr72CYceoUzhLEoafTXB9MxRw4E7cD4rAv" \
+  --relay "/ip4/75.156.22.206/udp/4001/quic-v1/p2p/12D3KooWDFaYV9rwnkAr72CYceoUzhLEoafTXB9MxRw4E7cD4rAv" \
   --vault vault.json
 ```
 
 ## Known Issues / Gotchas
 
-1. **Relay connection**: First attempt failed with "Response from behaviour was canceled" — this means the relay or target node wasn't reachable at that moment. Jason needs his relay + node running.
+1. **Relay uses QUIC not TCP** — node registers via UDP/QUIC, so circuit dials MUST use `/udp/4001/quic-v1/` not `/tcp/4001/`. TCP will reach the relay but the circuit won't find the node's reservation.
 
 2. **Auth requirement**: For push to succeed, BOTH sides need each other as contacts:
    - **Sender (me):** Needs target as contact ✅ (done)
@@ -72,7 +72,7 @@ printf 'testpass\n' | nexus push test-push.txt \
 ## For Push Test To Work
 
 Jason needs to:
-1. Have his relay server running (`nexus relay --port 4002`)
+1. Have his relay server running (`nexus relay --port 4001`)
 2. Have his node running and connected to the relay
 3. Add Neo's DID (`did:nexus:94UziBHERjPeifNGnRM3xcaidr9KmBzuD9Bu2A3YYmVV`) as a contact
 4. Grant at least `read` access on folder `/`

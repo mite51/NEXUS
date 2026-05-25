@@ -179,6 +179,18 @@ impl PreKeypair {
         })
     }
 
+    /// Encrypt a DEK for a specific recipient's public key
+    pub fn encrypt_dek_for(recipient_pk: &PrePublicKey, dek: &[u8; 32]) -> Result<EncryptedDek, PreError> {
+        let pk = pk_from_bytes(&recipient_pk.bytes)?;
+        let (capsule, ciphertext) =
+            umbral::encrypt(&pk, dek).map_err(|_| PreError::EncryptionFailed)?;
+
+        Ok(EncryptedDek {
+            capsule: capsule.to_bytes().map_err(|_| PreError::SerializationFailed)?.to_vec(),
+            ciphertext: ciphertext.to_vec(),
+        })
+    }
+
     /// Decrypt a DEK that was encrypted for this keypair (owner decryption)
     pub fn decrypt_dek(&self, encrypted: &EncryptedDek) -> Result<[u8; 32], PreError> {
         let capsule = capsule_from_bytes(&encrypted.capsule)?;
@@ -348,6 +360,38 @@ mod tests {
         let recovered = alice.decrypt_dek(&encrypted).unwrap();
 
         assert_eq!(dek, recovered);
+    }
+
+    #[test]
+    fn test_encrypt_dek_for_recipient() {
+        // Alice encrypts a DEK for Bob's public key
+        let bob = PreKeypair::generate();
+        let bob_pk = bob.public_key();
+
+        let dek: [u8; 32] = [0xCD; 32];
+
+        // Encrypt for Bob (using static method)
+        let encrypted = PreKeypair::encrypt_dek_for(&bob_pk, &dek).unwrap();
+
+        // Bob decrypts with his private key
+        let recovered = bob.decrypt_dek(&encrypted).unwrap();
+        assert_eq!(dek, recovered);
+    }
+
+    #[test]
+    fn test_encrypt_dek_for_wrong_recipient_fails() {
+        let bob = PreKeypair::generate();
+        let eve = PreKeypair::generate();
+        let bob_pk = bob.public_key();
+
+        let dek: [u8; 32] = [0xEF; 32];
+
+        // Encrypt for Bob
+        let encrypted = PreKeypair::encrypt_dek_for(&bob_pk, &dek).unwrap();
+
+        // Eve tries to decrypt — should fail
+        let result = eve.decrypt_dek(&encrypted);
+        assert!(result.is_err());
     }
 
     #[test]

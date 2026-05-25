@@ -1115,13 +1115,17 @@ pub fn decrypt_received(
     let plaintext = decrypt_data(&encrypted_body, &dek)
         .map_err(|_| "Decryption failed".to_string())?;
 
-    let out = output_path
-        .map(|s| s.to_string())
-        .or(manifest.shards.filename.clone())
-        .unwrap_or_else(|| "decrypted_output".into());
+    let filename = entry.filename.clone();
+    let out = match output_path {
+        Some(dir) => {
+            let p = Path::new(dir).join(&filename);
+            p.to_string_lossy().to_string()
+        }
+        None => filename,
+    };
 
     fs::write(&out, &plaintext)
-        .map_err(|e| format!("Failed to write: {}", e))?;
+        .map_err(|e| format!("Failed to write to {}: {}", out, e))?;
 
     // Mark as decrypted
     let _ = received_store.mark_decrypted(received_id);
