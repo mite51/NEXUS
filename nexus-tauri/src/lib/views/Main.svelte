@@ -22,6 +22,7 @@
   import SettingsView from './SettingsView.svelte';
   import LogsView from './LogsView.svelte';
   import PushToast from '../components/PushToast.svelte';
+  import PushSendModal from '../components/PushSendModal.svelte';
 
   export let vaultPath: string;
 
@@ -40,6 +41,7 @@
   let unlistenNodeLog: (() => void) | null = null;
   let unlistenPushProgress: (() => void) | null = null;
   let pushCleanupInterval: number | null = null;
+  let showPushModal = false;
   let encryptProgress = 0;
   let decryptProgress = 0;
   let searchQuery = '';
@@ -363,6 +365,9 @@
       <button class="secondary-btn" on:click={handleImportBundle}>
         📥 Import Bundle
       </button>
+      <button class="secondary-btn" on:click={() => showPushModal = true}>
+        📤 Push File
+      </button>
     {/if}
   </div>
 
@@ -435,6 +440,7 @@
 {/if}
 
 <PushToast />
+<PushSendModal {vaultPath} bind:show={showPushModal} />
 
 <style>
   .main {

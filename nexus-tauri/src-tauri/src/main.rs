@@ -38,6 +38,7 @@ fn main() {
             commands::list_received_files,
             commands::decrypt_received,
             commands::remove_received,
+            commands::push_to_peer,
             commands::start_node,
             commands::stop_node,
             commands::get_node_info,

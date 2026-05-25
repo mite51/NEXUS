@@ -1016,6 +1016,7 @@ pub async fn pull_shared_file(
 }
 
 const RECEIVED_FILES_PATH: &str = ".nexus-received.json";
+const STORE_DIR: &str = ".nexus-store";
 
 #[derive(Serialize)]
 pub struct ReceivedFileInfo {
@@ -1137,6 +1138,253 @@ pub fn decrypt_received(
 pub fn remove_received(id: &str) -> Result<(), String> {
     let store = ReceivedFiles::open(RECEIVED_FILES_PATH);
     store.remove(id)
+}
+
+// --- Push send command ---
+
+#[derive(Serialize, Clone)]
+pub struct PushSendProgress {
+    pub status: String,
+    pub filename: String,
+    pub shards_sent: usize,
+    pub shards_total: usize,
+    pub asset_id: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn push_to_peer(
+    file_path: &str,
+    target_peer_id: &str,
+    target_folder: &str,
+    vault_path: &str,
+    passphrase: &str,
+    state: State<'_, crate::node_state::NodeState>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    use tauri::Emitter;
+    use nexus_core::network::NodeCommand;
+    use nexus_core::network::protocol::NexusResponse;
+    use nexus_core::storage::compute_cid;
+
+    // Validate file
+    if !Path::new(file_path).exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+
+    let filename = Path::new(file_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unnamed".into());
+
+    let file_data = fs::read(file_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let total_size = file_data.len() as u64;
+
+    // Load keys
+    let (keypair, pre_kp) = load_keys(vault_path, passphrase)?;
+    let my_did = keypair.did();
+
+    // Encrypt and shard
+    let dek = generate_dek();
+    let encrypted_data = encrypt_data(&file_data, &dek)
+        .map_err(|e| format!("Encryption failed: {:?}", e))?;
+    let (mut shard_manifest, shards) = shard_data(&encrypted_data, DEFAULT_SHARD_SIZE);
+    shard_manifest.filename = Some(filename.clone());
+    let shard_count = shards.len();
+
+    // Look up receiver's PRE public key from contacts
+    let contact_store = nexus_core::access::contact::ContactStore::open(STORE_DIR)
+        .map_err(|e| format!("Failed to open contacts: {}", e))?;
+    let all_contacts = contact_store.list();
+    let receiver_contact = all_contacts.iter()
+        .find(|c| c.peer_id.as_deref() == Some(target_peer_id))
+        .ok_or_else(|| format!("No contact with peer_id: {}", target_peer_id))?;
+
+    if receiver_contact.pre_pk.is_empty() {
+        return Err(format!("Contact '{}' has no PRE public key", receiver_contact.label));
+    }
+    let receiver_pre_pk = PrePublicKey { bytes: receiver_contact.pre_pk.clone() };
+
+    // Encrypt DEK for receiver
+    let encrypted_dek = PreKeypair::encrypt_dek_for(&receiver_pre_pk, &dek)
+        .map_err(|e| format!("DEK encryption failed: {:?}", e))?;
+
+    // Build manifest
+    let manifest = NexusManifest {
+        owner: my_did.clone(),
+        owner_pre_pk: pre_kp.public_key(),
+        shards: shard_manifest,
+        encrypted_dek,
+    };
+    let manifest_bytes = serde_json::to_vec(&manifest)
+        .map_err(|e| format!("Manifest serialization failed: {}", e))?;
+    let manifest_hash = hex_encode(&compute_cid(&manifest_bytes));
+
+    // Build auth signature
+    let nonce: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut sign_payload = Vec::new();
+    sign_payload.extend_from_slice(my_did.as_bytes());
+    sign_payload.extend_from_slice(target_folder.as_bytes());
+    sign_payload.extend_from_slice(manifest_hash.as_bytes());
+    sign_payload.extend_from_slice(&nonce);
+    sign_payload.extend_from_slice(&timestamp.to_le_bytes());
+    let signature = keypair.sign(&sign_payload);
+
+    // Parse target peer
+    let target_peer: nexus_core::network::PeerId = target_peer_id.parse()
+        .map_err(|e| format!("Invalid peer ID: {}", e))?;
+
+    // Get node command channel
+    let cmd_tx = state.command_tx().await
+        .ok_or("Node not running")?;
+
+    // Subscribe to push responses
+    let mut push_rx = state.subscribe_pull_responses();
+
+    // Dial target through relays if configured
+    let saved_config = get_config();
+    let relay_addrs: Vec<String> = saved_config.relay_servers.iter().map(|e| e.addr.clone()).collect();
+    for relay_addr_str in &relay_addrs {
+        let circuit_addr_str = format!("{}/p2p-circuit/p2p/{}", relay_addr_str, target_peer);
+        if let Ok(circuit_addr) = circuit_addr_str.parse::<nexus_core::network::Multiaddr>() {
+            let _ = cmd_tx.send(NodeCommand::Dial(circuit_addr)).await;
+        }
+    }
+
+    // Brief wait for connection establishment
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Emit initial progress
+    let _ = app_handle.emit("nexus://push-send-progress", PushSendProgress {
+        status: "requesting".into(),
+        filename: filename.clone(),
+        shards_sent: 0,
+        shards_total: shard_count,
+        asset_id: None,
+        error: None,
+    });
+
+    // Send PushRequest
+    cmd_tx.send(NodeCommand::PushRequest {
+        peer: target_peer,
+        sender_did: my_did.clone(),
+        target_folder: target_folder.to_string(),
+        filename: filename.clone(),
+        total_size,
+        shard_count,
+        manifest_hash,
+        signature,
+        nonce,
+        timestamp,
+    }).await.map_err(|e| format!("Failed to send push request: {}", e))?;
+
+    // Wait for PushAccepted or PushDenied
+    let session_id = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match push_rx.recv().await {
+                Ok(resp) if resp.peer == target_peer => {
+                    match resp.response {
+                        NexusResponse::PushAccepted { session_id } => return Ok(session_id),
+                        NexusResponse::PushDenied { reason } => return Err(format!("Push denied: {}", reason)),
+                        _ => {}
+                    }
+                }
+                Err(e) => return Err(format!("Channel error: {}", e)),
+                _ => {}
+            }
+        }
+    }).await
+        .map_err(|_| "Timeout waiting for push accept/deny".to_string())??;
+
+    let _ = app_handle.emit("nexus://push-send-progress", PushSendProgress {
+        status: "streaming".into(),
+        filename: filename.clone(),
+        shards_sent: 0,
+        shards_total: shard_count,
+        asset_id: None,
+        error: None,
+    });
+
+    // Stream shards
+    for (i, shard) in shards.iter().enumerate() {
+        let cid_hex = hex_encode(&shard.cid);
+        cmd_tx.send(NodeCommand::PushData {
+            peer: target_peer,
+            session_id: session_id.clone(),
+            shard_index: i,
+            cid: cid_hex,
+            data: shard.data.clone(),
+        }).await.map_err(|e| format!("Failed to send shard {}: {}", i, e))?;
+
+        // Wait for ack
+        let _ack = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                match push_rx.recv().await {
+                    Ok(resp) if resp.peer == target_peer => {
+                        match resp.response {
+                            NexusResponse::PushShardAck { shard_index, .. } if shard_index == i => return Ok(()),
+                            NexusResponse::PushFailed { reason, .. } => return Err(format!("Push failed at shard {}: {}", i, reason)),
+                            _ => {}
+                        }
+                    }
+                    Err(e) => return Err(format!("Channel error: {}", e)),
+                    _ => {}
+                }
+            }
+        }).await
+            .map_err(|_| format!("Timeout waiting for shard {} ack", i))??;
+
+        let _ = app_handle.emit("nexus://push-send-progress", PushSendProgress {
+            status: "streaming".into(),
+            filename: filename.clone(),
+            shards_sent: i + 1,
+            shards_total: shard_count,
+            asset_id: None,
+            error: None,
+        });
+    }
+
+    // Send PushComplete
+    cmd_tx.send(NodeCommand::PushComplete {
+        peer: target_peer,
+        session_id: session_id.clone(),
+        manifest: manifest_bytes,
+    }).await.map_err(|e| format!("Failed to send push complete: {}", e))?;
+
+    // Wait for PushStored
+    let asset_id = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            match push_rx.recv().await {
+                Ok(resp) if resp.peer == target_peer => {
+                    match resp.response {
+                        NexusResponse::PushStored { asset_id, .. } => return Ok(asset_id),
+                        NexusResponse::PushFailed { reason, .. } => return Err(format!("Push failed: {}", reason)),
+                        _ => {}
+                    }
+                }
+                Err(e) => return Err(format!("Channel error: {}", e)),
+                _ => {}
+            }
+        }
+    }).await
+        .map_err(|_| "Timeout waiting for storage confirmation".to_string())??;
+
+    let _ = app_handle.emit("nexus://push-send-progress", PushSendProgress {
+        status: "complete".into(),
+        filename: filename.clone(),
+        shards_sent: shard_count,
+        shards_total: shard_count,
+        asset_id: Some(asset_id.clone()),
+        error: None,
+    });
+
+    Ok(asset_id)
 }
 
 // --- Node lifecycle commands ---

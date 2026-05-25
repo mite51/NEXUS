@@ -318,3 +318,24 @@ export async function stopRelay(): Promise<void> {
 export async function getRelayInfo(): Promise<RelayInfo> {
   return invoke('get_relay_info');
 }
+
+// --- Push send ---
+
+export interface PushSendProgress {
+  status: 'requesting' | 'streaming' | 'complete' | 'error';
+  filename: string;
+  shards_sent: number;
+  shards_total: number;
+  asset_id: string | null;
+  error: string | null;
+}
+
+export async function pushToPeer(
+  filePath: string,
+  targetPeerId: string,
+  targetFolder: string,
+  vaultPath: string,
+  passphrase: string,
+): Promise<string> {
+  return invoke('push_to_peer', { filePath, targetPeerId, targetFolder, vaultPath, passphrase });
+}
