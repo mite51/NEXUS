@@ -176,6 +176,26 @@ enum Commands {
         #[arg(long, default_value = "vault.json")]
         vault: String,
     },
+    /// Sync re-encryption fragments for all contacts with access grants
+    ///
+    /// Generates missing rfrags (so authorized contacts can decrypt) and removes
+    /// stale rfrags (where access was revoked). Requires vault passphrase.
+    SyncRfrags {
+        #[arg(long, default_value = "vault.json")]
+        vault: String,
+        /// Store directory
+        #[arg(long, default_value = ".nexus-store")]
+        dir: String,
+        /// Only generate rfrags (don't remove stale ones)
+        #[arg(long, default_value_t = false)]
+        no_revoke: bool,
+        /// Only process a specific asset ID
+        #[arg(long)]
+        asset: Option<String>,
+        /// Dry run — show what would be done without making changes
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
     /// Create a join request to exchange contacts
     CreateJoinRequest {
         #[arg(long, default_value = "vault.json")]
@@ -507,6 +527,9 @@ fn main() {
         },
         Commands::MakePublic { asset_id, vault } => {
             commands::make_public(&asset_id, &vault)
+        }
+        Commands::SyncRfrags { vault, dir, no_revoke, asset, dry_run } => {
+            commands::sync_rfrags(&vault, &dir, !no_revoke, asset.as_deref(), dry_run)
         }
         Commands::CreateJoinRequest { vault, name, include_pre } => {
             commands::create_join_request(&vault, &name, include_pre)

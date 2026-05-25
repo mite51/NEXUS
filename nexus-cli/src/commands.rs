@@ -1493,6 +1493,180 @@ pub fn make_public(asset_id: &str, vault_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Synchronize re-encryption fragments with access grants.
+///
+/// For each asset in the store:
+/// - Contacts with READ+ access and a PRE public key get an rfrag generated
+/// - Contacts who no longer have access get their rfrag removed (if revoke=true)
+pub fn sync_rfrags(
+    vault_path: &str,
+    store_dir: &str,
+    revoke: bool,
+    filter_asset: Option<&str>,
+    dry_run: bool,
+) -> Result<(), String> {
+    use nexus_core::access::{ContactStore, FolderStore, GroupStore};
+    use nexus_core::access::permission::Permission;
+
+    let passphrase = prompt_passphrase("Vault passphrase: ")?;
+    let (_keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
+
+    let asset_store = AssetStore::open(store_dir)
+        .map_err(|e| format!("Failed to open asset store: {}", e))?;
+    let contacts = ContactStore::open(store_dir)
+        .map_err(|e| format!("Failed to open contacts: {}", e))?;
+    let folders = FolderStore::open(store_dir)
+        .map_err(|e| format!("Failed to open folders: {}", e))?;
+    let groups = GroupStore::open(store_dir)
+        .map_err(|e| format!("Failed to open groups: {}", e))?;
+
+    let asset_ids = match filter_asset {
+        Some(id) => vec![id.to_string()],
+        None => asset_store.list_assets()
+            .map_err(|e| format!("Failed to list assets: {}", e))?,
+    };
+
+    if asset_ids.is_empty() {
+        println!("No assets found in store.");
+        return Ok(());
+    }
+
+    let all_contacts = contacts.list();
+    let mut generated = 0u32;
+    let mut revoked = 0u32;
+    let mut skipped = 0u32;
+
+    println!("Syncing rfrags for {} asset(s) across {} contact(s){}...",
+        asset_ids.len(), all_contacts.len(),
+        if dry_run { " [DRY RUN]" } else { "" });
+    println!();
+
+    for asset_id in &asset_ids {
+        // Load manifest to get folder context (if stored in metadata)
+        let manifest_bytes = match asset_store.get_manifest(asset_id)
+            .map_err(|e| format!("Failed to get manifest: {}", e))? {
+            Some(b) => b,
+            None => {
+                eprintln!("  ! Asset {} — manifest not found, skipping", asset_id);
+                continue;
+            }
+        };
+
+        let manifest: NexusManifest = match serde_json::from_slice(&manifest_bytes) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("  ! Asset {} — invalid manifest ({}), skipping", asset_id, e);
+                continue;
+            }
+        };
+
+        // Determine folder path for this asset.
+        // Since manifests don't store folder info, use "/" as default.
+        // The contact's effective permission at "/" (or their global access)
+        // determines whether they can read this asset.
+        let folder_path = "/";
+
+        for contact in all_contacts {
+            // Skip contacts without PRE public key
+            if contact.pre_pk.is_empty() {
+                continue;
+            }
+
+            let effective = folders.effective_permission(
+                &contact.did, folder_path, Some(asset_id), &contacts, &groups,
+            );
+
+            let has_read = effective.satisfies(Permission::READ);
+            let has_rfrag = asset_store.has_rfrag(asset_id, &contact.did);
+
+            if has_read && !has_rfrag {
+                // Need to generate rfrag
+                if dry_run {
+                    println!("  + [would generate] {} ← {}", &asset_id[..12], contact.label);
+                } else {
+                    match generate_rfrag_for_contact(&pre_kp, &manifest, asset_id, contact, &asset_store) {
+                        Ok(()) => {
+                            println!("  + Generated rfrag: {} ← {}", &asset_id[..12], contact.label);
+                        }
+                        Err(e) => {
+                            eprintln!("  ! Failed rfrag for {} ← {}: {}", &asset_id[..12], contact.label, e);
+                        }
+                    }
+                }
+                generated += 1;
+            } else if !has_read && has_rfrag && revoke {
+                // Access revoked — remove rfrag
+                if dry_run {
+                    println!("  - [would revoke] {} ← {}", &asset_id[..12], contact.label);
+                } else {
+                    match asset_store.remove_rfrag(asset_id, &contact.did) {
+                        Ok(_) => {
+                            println!("  - Revoked rfrag: {} ← {}", &asset_id[..12], contact.label);
+                        }
+                        Err(e) => {
+                            eprintln!("  ! Failed revoke for {} ← {}: {}", &asset_id[..12], contact.label, e);
+                        }
+                    }
+                }
+                revoked += 1;
+            } else {
+                skipped += 1;
+            }
+        }
+    }
+
+    println!();
+    println!("Done{}: {} generated, {} revoked, {} unchanged",
+        if dry_run { " (dry run)" } else { "" }, generated, revoked, skipped);
+    Ok(())
+}
+
+/// Generate a single rfrag for a contact on a specific asset
+fn generate_rfrag_for_contact(
+    owner_pre_kp: &PreKeypair,
+    manifest: &NexusManifest,
+    asset_id: &str,
+    contact: &nexus_core::access::contact::Contact,
+    asset_store: &AssetStore,
+) -> Result<(), String> {
+    use nexus_core::crypto::pre::PrePublicKey;
+
+    // Reconstruct recipient's PRE public key from stored bytes
+    let recipient_pk = PrePublicKey {
+        bytes: contact.pre_pk.clone(),
+    };
+
+    // Generate kfrags (1-of-1 for direct sharing)
+    let signer = PreSigner::new();
+    let vk = signer.verifying_key();
+    let kfrags = signer.generate_kfrags(owner_pre_kp, &recipient_pk, 1, 1)
+        .map_err(|e| format!("kfrag generation failed: {}", e))?;
+
+    // Re-encrypt the capsule
+    let cfrag = pre::reencrypt(
+        &manifest.encrypted_dek,
+        &kfrags[0],
+        &owner_pre_kp.public_key(),
+        &recipient_pk,
+        &vk,
+    ).map_err(|e| format!("Re-encryption failed: {}", e))?;
+
+    // Store as rfrag (same format as share grants)
+    let grant = ShareGrant {
+        recipient: contact.did.clone(),
+        recipient_pre_pk: recipient_pk,
+        cfrags: vec![cfrag],
+        verifying_key: vk,
+        manifest_ref: String::new(),
+    };
+
+    let rfrag_bytes = serde_json::to_vec(&grant)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+    asset_store.put_rfrag(asset_id, &contact.did, &rfrag_bytes)?;
+
+    Ok(())
+}
+
 pub fn create_join_request(vault_path: &str, name: &str, include_pre: bool) -> Result<(), String> {
     let passphrase = prompt_passphrase("Passphrase: ")?;
     let (keypair, pre_kp) = load_keys(vault_path, &passphrase)?;
